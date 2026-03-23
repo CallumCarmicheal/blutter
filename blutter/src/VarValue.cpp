@@ -72,28 +72,25 @@ std::string VarArray::ToString()
 		// has data (const array)
 		const auto& arr = dart::Array::Handle(ptr);
 		const auto arr_len = arr.Length();
-		//const auto& type_args = dart::TypeArguments::Handle(arr.GetTypeArguments());
 		std::ostringstream ss;
 		ss << "const [";
 		if (arr_len > 0) {
-			// in ImmutableList, only Dart type (native type is not used)
-			const auto heap_base = dart::Thread::Current()->heap_base();
+			// In ImmutableList, only Dart type (native type is not used)
 			auto& obj = dart::Object::Handle();
-			auto arrPtr = dart::Array::DataOf(arr.ptr());
+			auto arrPtr = dart::Array::DataOf(static_cast<dart::RawArray*>(arr.raw()));
 			for (intptr_t i = 0; i < arr_len; i++) {
 				if (i != 0)
 					ss << ", ";
 
-				if (arrPtr->IsHeapObject()) {
-					obj = arrPtr->Decompress(heap_base);
+				if (arrPtr[i]->IsHeapObject()) {
+					obj = arrPtr[i];
 					// TODO: better string representation
 					ss << obj.ToCString();
 				}
 				else {
-					obj = arrPtr->DecompressSmi();
+					obj = dart::Smi::RawCast(arrPtr[i]);
 					ss << std::hex << std::showbase << dart::Smi::Cast(obj).Value();
 				}
-				arrPtr++;
 			}
 		}
 		ss << "]";

@@ -3,7 +3,7 @@
 #include "DartClass.h"
 #include <filesystem>
 
-DartLibrary::DartLibrary(const dart::Library& lib) : ptr(lib.ptr()), topClass(NULL)
+DartLibrary::DartLibrary(const dart::Library& lib) : ptr(lib.raw()), topClass(NULL)
 {
 	auto& dtext = dart::String::Handle();
 	dtext = lib.name();
@@ -27,18 +27,19 @@ DartLibrary::DartLibrary(const dart::Library& lib) : ptr(lib.ptr()), topClass(NU
 	dart::DictionaryIterator iter(lib);
 	while (iter.HasNext()) {
 		auto objPtr = iter.GetNext();
+		if (objPtr == nullptr) break;
 		// only 4 possible types but functions and fields are in top level class
-		if (objPtr.IsClass()) {
+		if (objPtr->IsClass()) {
 			cls = dart::Class::RawCast(objPtr);
 			AddClass(cls);
 		}
-		else if (objPtr.IsFunction()) {
+		else if (objPtr->IsFunction()) {
 			// TODO: check if top level class contain this function
 		}
-		else if (objPtr.IsField()) {
+		else if (objPtr->IsField()) {
 			// TODO: check if top level class contain this field
 		}
-		else if (objPtr.IsLibraryPrefix()) {
+		else if (objPtr->IsLibraryPrefix()) {
 			throw std::runtime_error("library prefix in AOT");
 		}
 		else {

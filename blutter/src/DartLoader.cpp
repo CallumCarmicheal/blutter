@@ -5,17 +5,22 @@
 
 // Note: most running dart VM code from runtime/bin/main.cc
 
+// Direct access to the VM's FLAG_causal_async_stacks global
+extern "C" { extern bool _ZN4dart24FLAG_causal_async_stacksE; }
+#define CAUSAL_FLAG _ZN4dart24FLAG_causal_async_stacksE
+
 static void init_vm_flags()
 {
-	// From flutter/engine/runtime/dart_vm.cc
 	const char* options[] = {
-		//"--ignore-unrecognized-flags",
-		//"--enable_mirrors=false",
 		"--precompilation",
 	};
 	char* error = Dart_SetVMFlags(sizeof(options) / sizeof(*options), options);
-	if (error)
+	if (error) {
 		throw std::runtime_error(error);
+	}
+
+	// In 2.7.2, Dart_SetVMFlags doesn't set causal_async_stacks, set it directly
+	CAUSAL_FLAG = true;
 }
 
 static void init_dart(const uint8_t* vm_snapshot_data, const uint8_t* vm_snapshot_instructions)
@@ -28,11 +33,13 @@ static void init_dart(const uint8_t* vm_snapshot_data, const uint8_t* vm_snapsho
 	init_params.vm_snapshot_data = vm_snapshot_data;
 	init_params.vm_snapshot_instructions = vm_snapshot_instructions;
 	init_params.start_kernel_isolate = false;
-	// other params are no needed if snapshot is not run
 	error = Dart_Initialize(&init_params);
 	if (error) {
 		throw std::runtime_error(error);
 	}
+
+	// Re-set in case Dart_Initialize overwrote it
+	CAUSAL_FLAG = true;
 }
 
 static Dart_Isolate load_isolate(const uint8_t* isolate_snapshot_data, const uint8_t* isolate_snapshot_instructions)
@@ -41,15 +48,20 @@ static Dart_Isolate load_isolate(const uint8_t* isolate_snapshot_data, const uin
 
 	Dart_IsolateFlags flags;
 	Dart_IsolateFlagsInitialize(&flags);
+#if defined(HAS_IS_SYSTEM_ISOLATE)
 	flags.is_system_isolate = false;
-	//flags.snapshot_is_dontneed_safe = true; // Dart <= 2.14 has no this field
-	// dart 3 is always null safety
-	// null safety is enabled by default on Flutter 2.0 with Dart 2.12 (since April 2021)
+#endif
+#if defined(HAS_SNAPSHOT_IS_DONT_NEED_SAFE)
+	flags.snapshot_is_dontneed_safe = true;
+#endif
+	// null safety was introduced in Dart 2.12, not available in 2.7.2
 	auto pos = strstr((const char*)isolate_snapshot_data + 0x30, "null-safety");
-	if (pos == NULL)
-		throw std::runtime_error("Cannot find null-safety text");
-	// "no-null-safety" is set when null safety is disabled. So check for space
-	flags.null_safety = pos[-1] == ' ';
+#if defined(HAS_NULL_SAFETY_FLAG)
+	if (pos != NULL)
+		flags.null_safety = pos[-1] == ' ';
+	else
+		flags.null_safety = false;
+#endif
 
 	auto isolate = Dart_CreateIsolateGroup(nullptr, nullptr, isolate_snapshot_data,
 		isolate_snapshot_instructions, &flags,

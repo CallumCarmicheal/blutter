@@ -12,6 +12,8 @@ public:
 	std::vector<std::pair<intptr_t, std::string>> DumpStructHeaderFile(std::string outFile);
 
 	void DumpCode(const char* out_dir);
+	void WriteClass(std::ostream& of, const dart::Class& cls);
+	void DisassembleArm64(std::ostream& of, uint64_t addr, size_t size);
 
 	void DumpObjectPool(const char* filename);
 	void DumpObjects(const char* filename);

@@ -18,7 +18,7 @@ DartFunction::DartFunction(DartClass& cls, const dart::FunctionPtr ptr) : DartFn
 	const auto& func = dart::Function::Handle(zone, ptr);
 
 	// might need internal name for complete getter and setter name
-	name = func.UserVisibleNameCString();
+	name = dart::String::Handle(func.UserVisibleName()).ToCString();
 
 	is_native = func.is_native();
 	//is_closure = name == "<anonymous closure>";
@@ -35,17 +35,17 @@ DartFunction::DartFunction(DartClass& cls, const dart::FunctionPtr ptr) : DartFn
 
 		// function attributes
 		switch (func.kind()) {
-		case dart::UntaggedFunction::kConstructor:
+		case dart::RawFunction::kConstructor:
 			kind = CONSTRUCTOR;
 			break;
-		case dart::UntaggedFunction::kSetterFunction:
-		case dart::UntaggedFunction::kImplicitSetter:
+		case dart::RawFunction::kSetterFunction:
+		case dart::RawFunction::kImplicitSetter:
 			kind = SETTER;
 			break;
-		case dart::UntaggedFunction::kGetterFunction:
-		case dart::UntaggedFunction::kImplicitGetter:
-		case dart::UntaggedFunction::kImplicitStaticGetter:
-		//case dart::UntaggedFunction::kRecordFieldGetter:
+		case dart::RawFunction::kGetterFunction:
+		case dart::RawFunction::kImplicitGetter:
+		case dart::RawFunction::kImplicitStaticGetter:
+		//case dart::RawFunction::kRecordFieldGetter:
 			kind = GETTER;
 			break;
 		default:
@@ -66,7 +66,8 @@ DartFunction::DartFunction(DartClass& cls, const dart::FunctionPtr ptr) : DartFn
 
 	// the generated code can be checked from Assembler::MonomorphicCheckedEntryAOT()
 	// Code.EntryPoint() in obfuscated app might be pointed at start of snapshot (wrong)
-	const auto ep = func.entry_point() - lib_base;
+	const auto& code0 = dart::Code::Handle(zone, func.CurrentCode());
+	const auto ep = code0.EntryPoint() - lib_base;
 	const auto& code = dart::Code::Handle(zone, func.CurrentCode());
 	payload_addr = code.PayloadStart();
 	if (payload_addr > 0)
@@ -136,8 +137,10 @@ DartFunction* DartFunction::GetOutermostFunction() const
 		return nullptr;
 
 	DartFunction* topFn = parent;
-	while (topFn->parent) {
-		ASSERT(topFn->IsClosure());
+	int max_depth = 1000; // prevent infinite loops
+	while (topFn->parent && max_depth-- > 0) {
+		if (!topFn->IsClosure())
+			break;
 		topFn = topFn->parent;
 	}
 	return topFn;
@@ -197,9 +200,6 @@ void DartFunction::PrintHead(std::ostream& of) const
 	auto zone = dart::Thread::Current()->zone();
 	auto& func = dart::Function::Handle(zone, ptr);
 
-	// Note: Signature is not dropped in aot when any named parameter is required. (from Function::IsRequiredAt() body)
-	const auto& sig = dart::FunctionType::Handle(zone, func.signature());
-
 	of << "  "; // indentation
 	if (is_closure)
 		of << "[closure] ";
@@ -222,8 +222,7 @@ void DartFunction::PrintHead(std::ostream& of) const
 			of << "set ";
 			break;
 		case GETTER:
-			if (sig.IsNull())
-				of << "get ";
+			of << "get ";
 			break;
 		default:
 			if (is_static)
@@ -232,24 +231,22 @@ void DartFunction::PrintHead(std::ostream& of) const
 		}
 	}
 
-	if (sig.IsNull()) {
+	// In 2.7.2, use SignatureType to get the return type
+	auto& sigType = dart::Type::Handle(func.SignatureType());
+	if (sigType.IsNull()) {
 		of << "_ " << name << "(/* No info */)";
 	}
 	else {
-		dart::ZoneTextBuffer buffer(zone);
-		const auto& result_type = dart::AbstractType::Handle(sig.result_type());
-		result_type.PrintName(dart::Object::kScrubbedName, &buffer);
-		of << buffer.buffer() << " " << name;
-		// function type paramaters
-		const auto& type_params = dart::TypeParameters::Handle(zone, sig.type_parameters());
-		if (!type_params.IsNull()) {
-			buffer.Clear();
-			type_params.Print(dart::Thread::Current(), zone, false, 0, dart::Object::kScrubbedName, &buffer);
-			of << "<" << buffer.buffer() << ">";
+		// In 2.7.2, function types are Type objects with a signature function
+		auto& sigFn = dart::Function::Handle(sigType.signature());
+		if (!sigFn.IsNull()) {
+			auto& resultType = dart::AbstractType::Handle(sigFn.result_type());
+			auto& str = dart::String::Handle(resultType.UserVisibleName());
+			of << str.ToCString() << " " << name;
+		} else {
+			of << "dynamic " << name;
 		}
-		buffer.Clear();
-		sig.PrintParameters(dart::Thread::Current(), zone, dart::Object::kScrubbedName, &buffer);
-		of << "(" << buffer.buffer() << ")";
+		of << "(/* params */)";
 	}
 
 	if (is_async) {

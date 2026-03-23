@@ -82,7 +82,7 @@ LibAppInfo ElfHelper::findSnapshots(const uint8_t* elf)
 	const Symbol* dynsym = nullptr;
 	const Symbol* dynsym_end = nullptr;
 	for (uint16_t i = 0; i < sh_num; i++, section++) {
-		if (section->type == SectionHeaderType::SHT_STRTAB && dynstr == nullptr) {
+		if (static_cast<dart::elf::SectionHeaderType>(section->type) == dart::elf::SectionHeaderType::SHT_STRTAB && dynstr == nullptr) {
 			// we want only .dynstr for .dynsym
 			const char* strtab = (const char*)elf + section->file_offset;
 			const char* last = strtab + section->file_size;
@@ -94,7 +94,7 @@ LibAppInfo ElfHelper::findSnapshots(const uint8_t* elf)
 				dynstr = strtab;
 			}
 		}
-		if (section->type == SectionHeaderType::SHT_DYNSYM) {
+		if (static_cast<dart::elf::SectionHeaderType>(section->type) == dart::elf::SectionHeaderType::SHT_DYNSYM) {
 			if (section->entry_size != sizeof(Symbol))
 				throw std::invalid_argument("ELF: Invalid DYNSYM entry size");
 			dynsym = (Symbol*)(elf + section->file_offset);

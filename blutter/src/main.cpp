@@ -26,32 +26,32 @@ int main(int argc, char** argv)
 		std::cout << std::format("libapp is loaded at {:#x}\n", app.base());
 		std::cout << std::format("Dart heap at {:#x}\n", app.heap_base());
 
+		std::cerr << "About to EnterScope...\n";
 		app.EnterScope();
+		std::cerr << "EnterScope done, about to LoadInfo...\n";
 		app.LoadInfo();
+		std::cerr << "LoadInfo done, about to ExitScope...\n";
 		app.ExitScope();
+		std::cerr << "ExitScope done, about to EnterScope2...\n";
 
 		app.EnterScope();
-#ifndef NO_CODE_ANALYSIS
-		std::cout << "Analyzing the application\n";
-		CodeAnalyzer analyzer{ app };
-		analyzer.AnalyzeAll();
-#endif
+		std::cerr << "EnterScope2 done, about to dump...\n";
 
+		std::cerr << "Creating DartDumper...\n";
 		DartDumper dumper{ app };
-		std::cout << "Dumping Object Pool\n";
+		std::cerr << "Dumping Object Pool...\n";
 		dumper.DumpObjectPool((outDir / "pp.txt").string().c_str());
+		std::cerr << "Dumping Objects...\n";
 		dumper.DumpObjects((outDir / "objs.txt").string().c_str());
-#ifndef NO_CODE_ANALYSIS
-		std::cout << "Generating application assemblies\n";
-#else
-		std::cout << "Generating application functions in asm folder\n";
-#endif
+		std::cerr << "Dumping Code...\n";
 		dumper.DumpCode((outDir / "asm").string().c_str());
+		std::cerr << "Dumping IDA script...\n";
 		dumper.Dump4Ida(outDir / "ida_script");
 
-		std::cout << "Generating Frida script\n";
+		std::cerr << "Generating Frida script...\n";
 		FridaWriter fwriter{ app };
 		fwriter.Create((outDir / "blutter_frida.js").string().c_str());
+		std::cerr << "All done!\n";
 
 		app.ExitScope();
 	}

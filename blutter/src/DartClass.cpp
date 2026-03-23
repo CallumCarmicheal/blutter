@@ -6,7 +6,7 @@
 #include <numeric>
 
 DartClass::DartClass(const DartLibrary& lib_, const dart::Class& cls) :
-	lib(lib_), unboxed_fields_bitmap(0), superCls(nullptr), ptr(cls.ptr()), declarationType(nullptr), type(CLASS), 
+	lib(lib_), unboxed_fields_bitmap(0), superCls(nullptr), ptr(cls.raw()), declarationType(nullptr), type(CLASS), 
 	num_type_arguments(0), num_type_parameters(0), mixin(nullptr), is_const_constructor(false), is_transformed_mixin(false)
 {
 	auto zone = dart::Thread::Current()->zone();
@@ -17,13 +17,15 @@ DartClass::DartClass(const DartLibrary& lib_, const dart::Class& cls) :
 	// empty string for top class (default is "::")
 	if (!cls.IsTopLevel()) {
 		// Note: Dart use "Object" as instance name because it is parent of all class
-		name = cls.ScrubbedNameCString();
+		auto& str = dart::String::Handle(cls.ScrubbedName());
+		name = str.ToCString();
 	}
+	std::cerr << "  DartClass ctor: cid=" << id << " name=" << name << "\n";
 
 	// host_instance_size() is allocated size from heap (need alignment)
 	// we need only exact size to know the offset of subclass members
-	size = (int32_t)cls.host_next_field_offset();
-	type_argument_offset = (int32_t)cls.host_type_arguments_field_offset();
+	size = (int32_t)cls.next_field_offset();
+	type_argument_offset = (int32_t)cls.type_arguments_field_offset();
 	//const auto& supCls = Class::Handle(zone, cls.SuperClass()); // parent class
 
 	// sizeof(UntaggedObject) == sizeof(uword);  // 32 or 64 bits depended on architecture
@@ -40,11 +42,11 @@ DartClass::DartClass(const DartLibrary& lib_, const dart::Class& cls) :
 		return;
 	}
 
-	if (!dart::ClassTable::IsTopLevelCid(id)) {
+	if (!dart::IsTopLevelCidCompat(id)) {
 		//auto& supCls = dart::Class::Handle(zone, cls.SuperClass());
 		auto supClsPtr = cls.SuperClass();
 		
-		auto superCid = supClsPtr.untag()->id();
+		auto superCid = supClsPtr->GetClassId();
 		if (superCid > 0 && (intptr_t)supClsPtr == (intptr_t)dart::Object::null())
 			superCid = 0;
 		if (superCid)
@@ -94,6 +96,8 @@ DartClass::DartClass(const DartLibrary& lib_, const dart::Class& cls) :
 			AddFunction(funcPtr);
 		}
 	}
+
+	std::cerr << "  DartClass: " << name << " (cid=" << id << ") created\n";
 
 	//{
 	//	// Canonicalized const instances of this class (UntaggedClass)
@@ -212,7 +216,7 @@ void DartClass::PrintHead(std::ostream& of)
 		of << std::format("\n// class id: {}, size: {:#x}\n", id, size);
 	else
 		of << std::format("\n// class id: {}, size: {:#x}, field offset: {:#x}\n", id, size, superCls->size);
-	if (dart::ClassTable::IsTopLevelCid(id)) {
+	if (dart::IsTopLevelCidCompat(id)) {
 		of << "class :: {\n";
 		return;
 	}

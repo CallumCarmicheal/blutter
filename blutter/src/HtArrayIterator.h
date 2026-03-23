@@ -14,7 +14,7 @@ public:
 		while (curr_idx < max_idx) {
 			++curr_idx;
 			auto objPtr = data.At(curr_idx);
-			if (objPtr.GetClassId() != dart::kSentinelCid)
+			if (objPtr->GetClassId() != dart::kSentinelCid)
 				return true;
 		}
 		return false;

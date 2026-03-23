@@ -163,8 +163,8 @@ struct VarExpression : public VarValue {
 
 struct VarArray : public VarValue {
 	explicit VarArray(dart::ArrayPtr ptr) : VarValue(dart::kArrayCid, true), ptr(ptr), eleType(nullptr), length(-1) {}
-	explicit VarArray(DartAbstractType* eleType, int length = -1) : VarValue(dart::kArrayCid, false), ptr(dart::Object::null()), eleType(eleType), length(length) {}
-	explicit VarArray() : VarValue(dart::kArrayCid, false), ptr(dart::Object::null()), eleType(nullptr), length(-1) {}
+	explicit VarArray(DartAbstractType* eleType, int length = -1) : VarValue(dart::kArrayCid, false), ptr(static_cast<dart::ArrayPtr>(dart::Object::null())), eleType(eleType), length(length) {}
+	explicit VarArray() : VarValue(dart::kArrayCid, false), ptr(static_cast<dart::ArrayPtr>(dart::Object::null())), eleType(nullptr), length(-1) {}
 	virtual std::string ToString();
 	int64_t DataOffset() {
 		// TODO: typedArray has no type argument. so, offset is not the same

@@ -5,23 +5,26 @@
 
 DartField::DartField(const DartClass& cls_, dart::FieldPtr ptr_) : cls(cls_), type(nullptr), ptr(ptr_)
 {
-	ASSERT(!ptr_.IsRawNull());
-	auto zone = dart::Thread::Current()->zone();
+	ASSERT(ptr_ != nullptr);
 	const auto& field = dart::Field::Handle(ptr_);
-	name = field.UserVisibleNameCString();
+	auto& str = dart::String::Handle(field.UserVisibleName());
+	name = str.ToCString();
 	// static field has no offset in object. it is offset of static list
-	offset = (uint32_t)field.TargetOffset();
 	is_static = field.is_static();
 	is_late = field.is_late();
 	is_final = field.is_final();
 	is_const = field.is_const();
-	//field.is_covariant();
+
+	if (field.is_static()) {
+		offset = 0;
+	} else {
+		offset = (uint32_t)field.Offset();
+	}
 
 	typePtr = field.type();
 	const auto& abType = dart::AbstractType::Handle(typePtr);
-	dart::ZoneTextBuffer buffer(zone);
-	abType.PrintName(dart::Object::kScrubbedName, &buffer);
-	typeName = buffer.buffer();
+	str = abType.UserVisibleName();
+	typeName = str.ToCString();
 }
 
 DartField::DartField(const DartClass& cls, uint32_t offset, DartAbstractType* type, std::string name) :

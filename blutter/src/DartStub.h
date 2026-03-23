@@ -10,15 +10,22 @@ class DartStub : public DartFnBase
 {
 public:
 	enum Kind : int32_t {
+#if defined(OBJECT_STORE_STUB_CODE_LIST)
 #define DO(member, name) name ## Stub,
 		OBJECT_STORE_STUB_CODE_LIST(DO)
 #undef DO
 		BuildNonGenericMethodExtractorStub,
 		BuildGenericMethodExtractorStub,
+#else
+		// In 2.7.2, only build_method_extractor_code exists
+		BuildMethodExtractorStub,
+#endif
 #define DO(name) name ## VMStub,
 		VM_STUB_CODE_LIST(DO)
 #undef DO
+#if defined(OBJECT_STORE_STUB_CODE_LIST)
 		SharedStub,
+#endif
 		AllocateUserObjectStub,
 		TypeCheckStub,
 		UnknownStub,
@@ -79,7 +86,7 @@ public:
 	DartTypeStub& operator=(const DartTypeStub&) = delete;
 
 	//virtual std::string Name() const { return "IsType_" + name + "_Stub"; }
-	virtual std::string FullName() const { return "IsType_" + name + "_Stub"; }
+	virtual std::string FullName() const { return "IsType_" + name + "Stub"; }
 
 	// With the Record type in Dart 3.0, Test stub can be Type or RecordType
 	// So, we have to use AbstractType

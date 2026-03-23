@@ -35,9 +35,16 @@ std::string DartType::ToString() const
 
 std::string DartType::ToString(bool showTypeArgs) const
 {
-	std::string txt = cls.Name();
-	if (showTypeArgs) {
-		txt += args->ToString();
+	std::string txt;
+	try {
+		txt = cls.Name();
+	} catch (...) {
+		txt = "?";
+	}
+	if (showTypeArgs && args) {
+		try {
+			txt += args->ToString();
+		} catch (...) {}
 	}
 	if (IsNullable() && cls.Id() != dart::kDynamicCid) {
 		txt += "?";
@@ -227,7 +234,7 @@ DartTypeParameter* DartTypeDb::FindOrAdd(dart::TypeParameterPtr typeParamPtr)
 
 	const auto& typeParam = dart::TypeParameter::Handle(typeParamPtr);
 	// Add it to DB first. the bound might be many recursive calls
-	auto dartTypeParam = new DartTypeParameter(typeParam.IsNullable(), (uint16_t)typeParam.base(), (uint16_t)typeParam.index(), typeParam.IsClassTypeParameter());
+	auto dartTypeParam = new DartTypeParameter(typeParam.IsNullable(), (uint16_t)0, (uint16_t)typeParam.index(), typeParam.IsClassTypeParameter());
 	typesMap[ptr] = dartTypeParam;
 
 	dartTypeParam->bound = FindOrAdd(typeParam.bound());
@@ -237,65 +244,25 @@ DartTypeParameter* DartTypeDb::FindOrAdd(dart::TypeParameterPtr typeParamPtr)
 
 DartFunctionType* DartTypeDb::FindOrAdd(dart::FunctionTypePtr fnTypePtr)
 {
+	// In Dart 2.7.2, there is no separate FunctionType class.
+	// Function types are represented as Type objects with a signature.
+	// Return a minimal stub function type.
 	auto ptr = (intptr_t)fnTypePtr;
 	if (typesMap.contains(ptr)) {
 		return typesMap[ptr]->AsFunctionType();
 	}
 
-	const auto& fnType = dart::FunctionType::Handle(fnTypePtr);
-
-	// handle function type parameters
-	std::vector<DartTypeParameter*> typeParams;
-	if (fnType.NumTypeParameters() != 0) {
-		const auto& type_params = dart::TypeParameters::Handle(fnType.type_parameters());
-		RELEASE_ASSERT(!type_params.IsNull());
-		const intptr_t num_type_params = type_params.Length();
-		const intptr_t base = fnType.NumParentTypeArguments();
-		const bool kIsClassTypeParameter = false;
-		for (intptr_t i = 0; i < num_type_params; i++) {
-			auto dartTypeParam = new DartTypeParameter(false, (uint16_t)base, (uint16_t)(base + i), kIsClassTypeParameter);
-			dartTypeParam->bound = FindOrAdd(type_params.BoundAt(i));
-			// Note: there might be defaults to
-
-			typeParams.push_back(dartTypeParam);
-		}
-	}
-
-	// Add it to DB first. the bound might be many recursive calls
-	auto dartFnType = new DartFunctionType(fnType.IsNullable(), fnType.num_implicit_parameters() != 0, fnType.HasOptionalNamedParameters(), std::move(typeParams));
+	auto dartFnType = new DartFunctionType(false, false, false, std::vector<DartTypeParameter*>{});
 	typesMap[ptr] = dartFnType;
 
-	dartFnType->resultType = FindOrAdd(fnType.result_type());
-
-	const auto num_fixed_params = fnType.num_fixed_parameters();
-	dartFnType->params.reserve(num_fixed_params);
-	for (auto i = 0; i < num_fixed_params; i++) {
-		dartFnType->params.emplace_back("", FindOrAdd(fnType.ParameterTypeAt(i)));
-	}
-
-	const auto num_opt_params = fnType.NumOptionalParameters();
-	if (num_opt_params > 0) {
-		dartFnType->optionalParams.reserve(num_opt_params);
-		const auto num_params = num_fixed_params + num_opt_params;
-		auto& name = dart::String::Handle();
-		const char* tmp = "";
-		for (auto i = num_fixed_params; i < num_params; i++) {
-			//dartFnType->params[i].type = FindOrAdd(fnType.ParameterTypeAt(i));
-			//dartFnType->params[i].name = name.ToCString();
-			if (dartFnType->hasNamedParam) {
-				name = fnType.ParameterNameAt(i);
-				tmp = name.ToCString();
-			}
-			dartFnType->optionalParams.emplace_back(tmp, FindOrAdd(fnType.ParameterTypeAt(i)), nullptr);
-		}
-	}
+	dartFnType->resultType = &DartTypeDb::Get(dart::kDynamicCid)->AsType()[0];
 
 	return dartFnType;
 }
 
 DartAbstractType* DartTypeDb::FindOrAdd(dart::AbstractTypePtr abTypePtr)
 {
-	switch (abTypePtr.GetClassId()) {
+	switch (abTypePtr->GetClassId()) {
 	case dart::kTypeCid:
 		return FindOrAdd(dart::Type::RawCast(abTypePtr));
 #ifdef HAS_RECORD_TYPE
@@ -304,15 +271,14 @@ DartAbstractType* DartTypeDb::FindOrAdd(dart::AbstractTypePtr abTypePtr)
 #endif
 #ifdef HAS_TYPE_REF
 	case dart::kTypeRefCid: {
-		auto typePtr = dart::TypeRef::RawCast(abTypePtr)->untag()->type();
-		ASSERT(typePtr.GetClassId() == dart::kTypeCid);
+		const auto& typeRef = dart::TypeRef::Handle(dart::TypeRef::RawCast(abTypePtr));
+		auto typePtr = typeRef.type();
+		ASSERT(typePtr->GetClassId() == dart::kTypeCid);
 		return new DartTypeRef(*FindOrAdd(dart::Type::RawCast(typePtr)));
 	}
 #endif
 	case dart::kTypeParameterCid:
 		return FindOrAdd(dart::TypeParameter::RawCast(abTypePtr));
-	case dart::kFunctionTypeCid:
-		return FindOrAdd(dart::FunctionType::RawCast(abTypePtr));
 	}
 	//return nullptr;
 	FATAL("Invalid abstract type");

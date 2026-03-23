@@ -29,7 +29,7 @@ public:
 	DartField* FindField(intptr_t offset);
 
 	//bool IsNative() { return lib.ptr == nullptr; }
-	bool IsTopClass() const { return dart::ClassTable::IsTopLevelCid(id); }
+	bool IsTopClass() const { return dart::IsTopLevelCidCompat(id); }
 	uint32_t Id() const { return id; }
 	const DartLibrary& Library() const { return lib; }
 	dart::ClassPtr Ptr() const { return ptr; }

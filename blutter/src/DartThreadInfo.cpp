@@ -36,20 +36,32 @@ static void initThreadOffsetNames()
 	threadOffsetNames[dart::Thread::saved_shadow_call_stack_offset()] = "saved_shadow_call_stack";
 	threadOffsetNames[dart::Thread::write_barrier_mask_offset()] = "write_barrier_mask";
 #if defined(DART_COMPRESSED_POINTERS)
+#if defined(heap_base_offset)
 	threadOffsetNames[dart::Thread::heap_base_offset()] = "heap_base";
+#endif
 #endif
 	threadOffsetNames[dart::Thread::stack_overflow_flags_offset()] = "stack_overflow_flags";
 	threadOffsetNames[dart::Thread::safepoint_state_offset()] = "safepoint_state";
 	//threadOffsetNames[dart::Thread::callback_code_offset()] = "ffi_callback_code"; // removed in Dart 3.1.0
 	//threadOffsetNames[dart::Thread::callback_stack_return_offset()] = "ffi_callback_stack_return"; // removed in Dart 3.1.0
+#if defined(exit_through_ffi_offset)
 	threadOffsetNames[dart::Thread::exit_through_ffi_offset()] = "exit_through_ffi";
+#endif
+#if defined(api_top_scope_offset)
 	threadOffsetNames[dart::Thread::api_top_scope_offset()] = "api_top_scope";
+#endif
 	//threadOffsetNames[dart::Thread::double_truncate_round_supported_offset()] = "double_truncate_round_supported";
 	//threadOffsetNames[dart::Thread::tsan_utils_offset()] = "tsan_utils";
 	threadOffsetNames[dart::Thread::isolate_offset()] = "isolate";
+#if defined(isolate_group_offset)
 	threadOffsetNames[dart::Thread::isolate_group_offset()] = "isolate_group";
+#endif
+#if defined(field_table_values_offset)
 	threadOffsetNames[dart::Thread::field_table_values_offset()] = "field_table_values";
+#endif
+#if defined(dart_stream_offset)
 	threadOffsetNames[dart::Thread::dart_stream_offset()] = "dart_stream";
+#endif
 	//threadOffsetNames[dart::Thread::service_extension_stream_offset()] = "service_extension_stream";
 	threadOffsetNames[dart::Thread::store_buffer_block_offset()] = "store_buffer_block";
 	threadOffsetNames[dart::Thread::marking_stack_block_offset()] = "marking_stack_block";
@@ -60,7 +72,9 @@ static void initThreadOffsetNames()
 	threadOffsetNames[dart::Thread::vm_tag_offset()] = "vm_tag";
 	//threadOffsetNames[dart::Thread::unboxed_runtime_arg_offset()] = "unboxed_runtime_arg";
 	threadOffsetNames[dart::Thread::global_object_pool_offset()] = "global_object_pool";
+#if defined(dispatch_table_array_offset)
 	threadOffsetNames[dart::Thread::dispatch_table_array_offset()] = "dispatch_table_array";
+#endif
 	threadOffsetNames[dart::Thread::active_exception_offset()] = "active_exception";
 	threadOffsetNames[dart::Thread::active_stacktrace_offset()] = "active_stacktrace";
 	threadOffsetNames[dart::Thread::resume_pc_offset()] = "resume_pc";

@@ -84,8 +84,8 @@ def cmake_blutter(blutter_name: str, dartlib_name: str, name_suffix: str, macros
         llvm_path = subprocess.run(['brew', '--prefix', 'llvm@15'], capture_output=True, check=True).stdout.decode().strip()
         clang_file = os.path.join(llvm_path, 'bin', 'clang')
         my_env = {**os.environ, 'CC': clang_file, 'CXX': clang_file+'++'}
-    # cmake -GNinja -Bbuild -DCMAKE_BUILD_TYPE=Release
-    subprocess.run([CMAKE_CMD, '-GNinja', '-B', builddir, f'-DDARTLIB={dartlib_name}', f'-DNAME_SUFFIX={name_suffix}', '-DCMAKE_BUILD_TYPE=Release', '--log-level=NOTICE'] + macros, cwd=blutter_dir, check=True, env=my_env)
+    # cmake -GNinja -Bbuild -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    subprocess.run([CMAKE_CMD, '-GNinja', '-B', builddir, f'-DDARTLIB={dartlib_name}', f'-DNAME_SUFFIX={name_suffix}', '-DCMAKE_BUILD_TYPE=RelWithDebInfo', '--log-level=NOTICE'] + macros, cwd=blutter_dir, check=True, env=my_env)
 
     # build and install blutter
     subprocess.run([NINJA_CMD], cwd=builddir, check=True)

@@ -27,37 +27,56 @@ PRAGMA_WARNING(push, 0)
 #include <vm/dart.h>
 #include <vm/object.h>
 #include <vm/object_store.h>
-//#include <vm/stub_code.h>
 #include <vm/native_symbol.h>
-//#include <vm/field_table.h>
-//#include <vm/canonical_tables.h>
 #include <vm/zone_text_buffer.h>
-#include <vm/tagged_pointer.h>
 #include <vm/compiler/runtime_api.h>
 #include <vm/compiler/runtime_offsets_extracted.h>
+
+#if __has_include(<vm/tagged_pointer.h>)
+#include <vm/tagged_pointer.h>
+#define TAGGED_POINTER_H_PRESENT 1
+#else
+#include "compat_dart27.h"
+#endif
 PRAGMA_WARNING(pop)
 
 #ifdef OLD_MAP_SET_NAME
 namespace dart {
 	using Map = LinkedHashMap;
+#if defined(LinkedHashSet)
 	using Set = LinkedHashSet;
+#endif
 #ifdef OLD_MAP_NO_IMMUTABLE
 	using ConstMap = LinkedHashMap;
+#if defined(LinkedHashSet)
 	using ConstSet = LinkedHashSet;
+#endif
 #else
+#if defined(ImmutableLinkedHashMap)
 	using ConstMap = ImmutableLinkedHashMap;
 	using ConstSet = ImmutableLinkedHashSet;
+#else
+	using ConstMap = LinkedHashMap;
+#endif
 #endif
 	
 	enum ClassIdX : intptr_t {
 		kMapCid = kLinkedHashMapCid,
+#if defined(kLinkedHashSetCid)
 		kSetCid = kLinkedHashSetCid,
+#endif
 #ifdef OLD_MAP_NO_IMMUTABLE
 		kConstMapCid = kLinkedHashMapCid,
+#if defined(kLinkedHashSetCid)
 		kConstSetCid = kLinkedHashSetCid,
+#endif
 #else
+#if defined(kImmutableLinkedHashMapCid)
 		kConstMapCid = kImmutableLinkedHashMapCid,
 		kConstSetCid = kImmutableLinkedHashSetCid,
+#else
+		kConstMapCid = kLinkedHashMapCid,
+#endif
 #endif
 	};
 };

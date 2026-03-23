@@ -14,8 +14,8 @@ void FridaWriter::Create(const char* filename)
 
 	std::ofstream of(filename, std::ios_base::app);
 
-	of << "const ClassIdTagPos = " << dart::UntaggedObject::kClassIdTagPos << ";\n";
-	of << std::format("const ClassIdTagMask = {:#x};\n", (1 << dart::UntaggedObject::kClassIdTagSize) - 1);
+	of << "const ClassIdTagPos = " << dart::RawObject::kClassIdTagPos << ";\n";
+	of << std::format("const ClassIdTagMask = {:#x};\n", (1 << dart::RawObject::kClassIdTagSize) - 1);
 
 	of << "const NumPredefinedCids = " << dart::kNumPredefinedCids << ";\n";
 	of << "const CidObject = " << dart::kInstanceCid << ";\n";
@@ -27,8 +27,8 @@ void FridaWriter::Create(const char* filename)
 	of << "const CidString = " << dart::kOneByteStringCid << ";\n";
 	of << "const CidArray = " << dart::kArrayCid << ";\n";
 	of << "const CidGrowableArray = " << dart::kGrowableObjectArrayCid << ";\n";
-	of << "const CidSet = " << dart::kSetCid << ";\n";
-	of << "const CidMap = " << dart::kMapCid << ";\n";
+	of << "const CidSet = " << dart::kLinkedHashMapCid << ";\n";
+	of << "const CidMap = " << dart::kLinkedHashMapCid << ";\n";
 	of << "const CidClosure = " << dart::kClosureCid << ";\n";
 	of << "const CidUint8Array = " << dart::kTypedDataUint8ArrayCid << ";\n";
 	of << "const CidInt8Array = " << dart::kTypedDataInt8ArrayCid << ";\n";
@@ -55,61 +55,53 @@ void FridaWriter::Create(const char* filename)
 				//of << "tptr:" << (uint64_t)dart::Bool::True().ptr() - app.heap_base() << ",";
 				//of << "fptr:" << (uint64_t)dart::Bool::False().ptr() - app.heap_base() << ",";
 				// value_ offset in raw_object.h is inaccessible
-				of << "valOffset:" << AOT_Instance_InstanceSize << "},\n";
+				of << "valOffset:" << dart::Instance::InstanceSize() << "},\n";
 				break;
 			case dart::kMintCid:
 				of << "{id:" << dartCls->Id() << ",";
 				of << "name:\"int\",";
-				of << "valOffset:" << AOT_Mint_value_offset << "},\n";
+				of << "valOffset:" << dart::Mint::value_offset() << "},\n";
 				break;
 			case dart::kDoubleCid:
 				of << "{id:" << dartCls->Id() << ",";
 				of << "name:\"double\",";
-				of << "valOffset:" << AOT_Double_value_offset << "},\n";
+				of << "valOffset:" << dart::Double::value_offset() << "},\n";
 				break;
 			case dart::kOneByteStringCid:
 				of << "{id:" << dartCls->Id() << ",";
 				of << "name:\"String\",";
-				of << "lenOffset:" << AOT_String_length_offset << ",";
-				of << "dataOffset:" << AOT_OneByteString_data_offset << "},\n";
+				of << "lenOffset:" << dart::String::length_offset() << ",";
+				of << "dataOffset:" << dart::OneByteString::data_offset() << "},\n";
 				break;
 			case dart::kArrayCid:
 				of << "{id:" << dartCls->Id() << ",";
 				of << "name:\"List\",";
 				//dart::Array::kBytesPerElement is same as a compressed pointer size
-				of << "lenOffset:" << AOT_Array_length_offset << ",";
-				of << "dataOffset:" << AOT_Array_data_offset << ",";
-				of << "typeOffset:" << AOT_Array_type_arguments_offset << "},\n";
+				of << "lenOffset:" << dart::Array::length_offset() << ",";
+				of << "dataOffset:" << dart::Array::data_offset() << ",";
+				of << "typeOffset:" << dart::Array::type_arguments_offset() << "},\n";
 				break;
 			case dart::kGrowableObjectArrayCid:
 				of << "{id:" << dartCls->Id() << ",";
 				of << "name:\"GrowableList\",";
-				of << "lenOffset:" << AOT_GrowableObjectArray_length_offset << ",";
-				of << "dataOffset:" << AOT_GrowableObjectArray_data_offset << ",";
-				of << "typeOffset:" << AOT_GrowableObjectArray_type_arguments_offset << "},\n";
+				of << "lenOffset:" << dart::GrowableObjectArray::length_offset() << ",";
+				of << "dataOffset:" << dart::GrowableObjectArray::data_offset() << ",";
+				of << "typeOffset:" << dart::GrowableObjectArray::type_arguments_offset() << "},\n";
 				break;
-			case dart::kSetCid:
+			case dart::kLinkedHashMapCid:
 				of << "{id:" << dartCls->Id() << ",";
-				of << "name:\"Set\",";
-				of << "usedOffset:" << AOT_LinkedHashBase_used_data_offset << ",";
-				of << "delOffset:" << AOT_LinkedHashBase_deleted_keys_offset << ",";
-				of << "dataOffset:" << AOT_LinkedHashBase_data_offset << ",";
-				of << "typeOffset:" << AOT_LinkedHashBase_type_arguments_offset << "},\n";
-				break;
-			case dart::kMapCid:
-				of << "{id:" << dartCls->Id() << ",";
-				of << "name:\"Map\",";
-				of << "usedOffset:" << AOT_LinkedHashBase_used_data_offset << ",";
-				of << "delOffset:" << AOT_LinkedHashBase_deleted_keys_offset << ",";
-				of << "dataOffset:" << AOT_LinkedHashBase_data_offset << ",";
-				of << "typeOffset:" << AOT_LinkedHashBase_type_arguments_offset << "},\n";
+				of << "name:" << Util::Quote(dartCls->Name()) << ",";
+				of << "usedOffset:" << dart::LinkedHashMap::used_data_offset() << ",";
+				of << "delOffset:" << dart::LinkedHashMap::deleted_keys_offset() << ",";
+				of << "dataOffset:" << dart::LinkedHashMap::data_offset() << ",";
+				of << "typeOffset:" << dart::LinkedHashMap::type_arguments_offset() << "},\n";
 				break;
 			case dart::kClosureCid:
 				of << "{id:" << dartCls->Id() << ",";
 				of << "name:\"Closure\",";
-				of << "fnOffset:" << AOT_Closure_function_offset << ",";
-				of << "contextOffset:" << AOT_Closure_context_offset << ",";
-				of << "epOffset:" << AOT_Closure_entry_point_offset << "},\n";
+				of << "fnOffset:" << dart::Closure::function_offset() << ",";
+				of << "contextOffset:" << dart::Closure::context_offset() << ",";
+				of << "epOffset:" << dart::Function::entry_point_offset() << "},\n";
 				break;
 			case dart::kTypedDataUint8ArrayCid:
 			case dart::kTypedDataUint16ArrayCid:
@@ -121,15 +113,15 @@ void FridaWriter::Create(const char* filename)
 			case dart::kTypedDataInt64ArrayCid:
 				of << "{id:" << dartCls->Id() << ",";
 				of << "name:" << Util::Quote(dartCls->Name()) << ",";
-				of << "lenOffset:" << AOT_TypedDataBase_length_offset << ",";
+				of << "lenOffset:" << dart::TypedDataBase::length_offset() << ",";
 				// current version name is "AOT_TypedData_payload_offset" but old version name is "AOT_TypedData_data_offset"
 				// function from UntaggedTypedData is always same
-				of << "dataOffset:" << dart::UntaggedTypedData::payload_offset() << "},\n";
+				of << "dataOffset:" << dart::RawTypedData::payload_offset() << "},\n";
 				break;
 			case dart::kInstanceCid:
 				of << "{id:" << dartCls->Id() << ",";
 				of << "name:\"Object\",";
-				of << "size:" << AOT_Instance_InstanceSize << "},\n";
+				of << "size:" << dart::Instance::InstanceSize() << "},\n";
 				break;
 			default:
 				of << "{id:" << dartCls->Id() << ",";

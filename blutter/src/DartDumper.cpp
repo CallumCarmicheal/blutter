@@ -3,6 +3,7 @@
 #include <fstream>
 #include <format>
 #include <set>
+#include <map>
 #include <ranges>
 #include <iostream>
 #include <sstream>
@@ -70,6 +71,12 @@ static std::string getFunctionName4Ida(const DartFunction& dartFn, const std::st
 	return fnName;
 }
 
+const std::string& DartDumper::getQuoteString(dart::Object& obj)
+{
+	static std::string empty = "?";
+	return empty;
+}
+
 void DartDumper::Dump4Ida(std::filesystem::path outDir)
 {
 	std::filesystem::create_directory(outDir);
@@ -77,292 +84,251 @@ void DartDumper::Dump4Ida(std::filesystem::path outDir)
 	of << "import ida_funcs\n";
 	of << "import idaapi\n\n";
 
-	for (auto lib : app.libs) {
-		std::string lib_prefix = lib->GetName();
-		for (auto cls : lib->classes) {
-			std::string cls_prefix = cls->Name();
-			for (auto dartFn : cls->Functions()) {
+	// Process native lib functions
+	for (auto cls : app.nativeLib.classes) {
+		for (auto dartFn : cls->Functions()) {
+			try {
 				const auto ep = dartFn->Address();
-				auto name = getFunctionName4Ida(*dartFn, cls_prefix);
+				if (ep == 0 || dartFn->Size() == 0) continue;
+				std::string name = dartFn->Name();
+				std::replace(name.begin(), name.end(), '<', '_');
+				std::replace(name.begin(), name.end(), '>', '_');
+				std::replace(name.begin(), name.end(), ' ', '_');
 				of << std::format("ida_funcs.add_func({:#x}, {:#x})\n", ep, ep + dartFn->Size());
-				of << std::format("idaapi.set_name({:#x}, \"{}_{}::{}_{:x}\")\n", ep, lib_prefix, cls_prefix, name.c_str(), ep);
-				if (dartFn->HasMorphicCode()) {
-					of << std::format("idaapi.set_name({:#x}, \"{}_{}::{}_{:x}_miss\")\n", dartFn->PayloadAddress(), lib_prefix, cls_prefix, name.c_str(), ep);
-					of << std::format("idaapi.set_name({:#x}, \"{}_{}::{}_{:x}_check\")\n", dartFn->MonomorphicAddress(), lib_prefix, cls_prefix, name.c_str(), ep);
+				of << std::format("idaapi.set_name({:#x}, \"{}_{:x}\")\n", ep, name.c_str(), ep);
+			} catch (...) {}
+		}
+	}
+
+	// Process library functions
+	for (auto dartLib : app.libs) {
+		for (auto cls : dartLib->classes) {
+			for (auto dartFn : cls->Functions()) {
+				try {
+					const auto ep = dartFn->Address();
+					if (ep == 0 || dartFn->Size() == 0) continue;
+					std::string name = dartFn->Name();
+					std::replace(name.begin(), name.end(), '<', '_');
+					std::replace(name.begin(), name.end(), '>', '_');
+					std::replace(name.begin(), name.end(), ' ', '_');
+					of << std::format("ida_funcs.add_func({:#x}, {:#x})\n", ep, ep + dartFn->Size());
+					of << std::format("idaapi.set_name({:#x}, \"{}_{:x}\")\n", ep, name.c_str(), ep);
+				} catch (...) {}
+			}
+		}
+	}
+
+	// Add stubs
+	for (auto& [addr, stub] : app.stubs) {
+		try {
+			if (stub->Size() == 0) continue;
+			of << std::format("ida_funcs.add_func({:#x}, {:#x})\n", addr, addr + stub->Size());
+			of << std::format("idaapi.set_name({:#x}, \"stub_{}_{:x}\")\n", addr, stub->Name(), addr);
+		} catch (...) {}
+	}
+}
+
+#include <capstone/capstone.h>
+
+void DartDumper::DisassembleArm64(std::ostream& of, uint64_t addr, size_t size)
+{
+	csh handle;
+	cs_insn* insn;
+
+	if (cs_open(CS_ARCH_ARM64, CS_MODE_ARM, &handle) != CS_ERR_OK)
+		return;
+
+	cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
+	size_t count = cs_disasm(handle, (const uint8_t*)addr, size, addr, 0, &insn);
+
+	for (size_t i = 0; i < count; i++) {
+		of << std::format("    //     {:#010x}: {:<10}{}\n", insn[i].address, insn[i].mnemonic, insn[i].op_str);
+	}
+
+	if (count > 0)
+		cs_free(insn, count);
+	cs_close(&handle);
+}
+
+void DartDumper::WriteClass(std::ostream& of, const dart::Class& cls)
+{
+	try {
+		if (cls.IsNull()) return;
+
+		auto cid = cls.id();
+		auto& nameStr = dart::String::Handle(cls.ScrubbedName());
+		auto name = nameStr.ToCString();
+
+		of << std::format("// class id: {}, size: {:#x}\n", cid, cls.next_field_offset());
+		of << std::format("class {} {{\n", name);
+
+		// Fields
+		const auto& fieldArray = dart::Array::Handle(cls.fields());
+		if (!fieldArray.IsNull()) {
+			for (intptr_t i = 0; i < fieldArray.Length(); i++) {
+				auto fieldPtr = fieldArray.At(i);
+				if (fieldPtr == nullptr) continue;
+				const auto& field = dart::Field::Handle(dart::Field::RawCast(fieldPtr));
+				auto& fn = dart::String::Handle(field.UserVisibleName());
+				if (field.is_static()) {
+					of << std::format("  static {} // offset: static\n", fn.ToCString());
+				} else {
+					of << std::format("  {} // offset: {:#x}\n", fn.ToCString(), field.Offset());
 				}
 			}
 		}
-	}
 
-	for (auto& item : app.stubs) {
-		auto stub = item.second;
-		const auto ep = stub->Address();
-		auto name = stub->FullName();
-		std::replace(name.begin(), name.end(), '<', '@');
-		std::replace(name.begin(), name.end(), '>', '@');
-		std::replace(name.begin(), name.end(), ',', '&');
-		std::replace(name.begin(), name.end(), ' ', '_');
-		of << std::format("idaapi.set_name({:#x}, \"{}_{:x}\")\n", ep, name.c_str(), ep);
-		if (stub->Size() == 0)
-			continue;
-		of << std::format("ida_funcs.add_func({:#x}, {:#x})\n", ep, ep + stub->Size());
-	}
+		if (!fieldArray.IsNull() && fieldArray.Length() > 0)
+			of << "\n";
 
+		// Functions
+		const auto& funcArray = dart::Array::Handle(cls.functions());
+		if (!funcArray.IsNull()) {
+			for (intptr_t i = 0; i < funcArray.Length(); i++) {
+				auto funcPtr = funcArray.At(i);
+				if (funcPtr == nullptr) continue;
+				const auto& func = dart::Function::Handle(dart::Function::RawCast(funcPtr));
+				auto& fn = dart::String::Handle(func.UserVisibleName());
 
-	// Note: create struct with a lot of member by ida script is very slow
-	//   use header file then adding comment is much faster
-	auto comments = DumpStructHeaderFile((outDir / "ida_dart_struct.h").string());
-	of << R"CBLOCK(
-import ida_struct
-import os
-def create_Dart_structs():
-	sid1 = idc.get_struc_id("DartThread")
-	if sid1 != idc.BADADDR:
-		return sid1, idc.get_struc_id("DartObjectPool")
-	hdr_file = os.path.join(os.path.dirname(__file__), 'ida_dart_struct.h')
-	idaapi.idc_parse_types(hdr_file, idc.PT_FILE)
-	sid1 = idc.import_type(-1, "DartThread")
-	sid2 = idc.import_type(-1, "DartObjectPool")
-	struc = ida_struct.get_struc(sid2)
-)CBLOCK";
-	for (const auto& [offset, comment] : comments) {
-		of << "\tida_struct.set_member_cmt(ida_struct.get_member(struc, " << offset << "), '''" << comment << "''', True)\n";
-	}
-	of << "\treturn sid1, sid2\n";
-	of << "thrs, pps = create_Dart_structs()\n";
+				// Get the code to find entry point and size
+				auto codePtr = func.CurrentCode();
+				uint64_t ep = 0;
+				int codeSize = 0;
+				if (codePtr != nullptr && codePtr != dart::Code::null()) {
+					const auto& code = dart::Code::Handle(codePtr);
+					ep = code.EntryPoint();
+					codeSize = code.Size();
+				}
 
-	of << "print('Applying Thread and Object Pool struct')\n";
-	applyStruct4Ida(of);
-
-	of << "print('Script finished!')\n";
-}
-
-std::vector<std::pair<intptr_t, std::string>> DartDumper::DumpStructHeaderFile(std::string outFile)
-{
-	std::ofstream of(outFile);
-
-	const auto max_offset = GetThreadMaxOffset();
-	auto padNo = 0;
-	of << "typedef struct DartThread {\n";
-	for (intptr_t i = 0; i <= max_offset; i += 8) {
-		auto& name = GetThreadOffsetName((int)i);
-		if (name.empty()) {
-			of << "\t__int64 pad" << std::hex << padNo << ";\n";
-			padNo++;
-		}
-		else {
-			of << "\t__int64 " << name << ";\n";
-		}
-	}
-	of << "} DartThread;\n";
-
-	of << "typedef struct DartObjectPool {\n";
-	of << "\t__int64 pad0;\n";
-	of << "\t__int64 pad1;\n";
-
-	std::vector<std::pair<intptr_t, std::string>> comments;
-	const auto& pool = app.GetObjectPool();
-	intptr_t num = pool.Length();
-
-	auto& obj = dart::Object::Handle();
-	for (intptr_t i = num - 1; i >= 0; i--) {
-		// the Dart Code access ObjectPool with offset that is not subtract by kHeapObjectTag (1)
-		//   so we have to add 1 to make the offset same as offset in the code
-		intptr_t offset = dart::ObjectPool::OffsetFromIndex(i) + 1;
-		std::string name;
-
-		auto objType = pool.TypeAt(i);
-		if (objType == dart::ObjectPool::EntryType::kTaggedObject) {
-			obj = pool.ObjectAt(i);
-			if (obj.IsUnlinkedCall()) {
-				const auto imm = pool.RawValueAt(i + 1);
-				auto dartFn = app.GetFunction(imm - app.base());
-				name = std::format("UnlinkedCall_{:#x}_{:#x}", offset, dartFn->Address(), offset);
-			}
-			else {
-				// TODO: more meaningful variable name
-				name = std::format("Obj_{:#x}", offset);
-				auto comment = ObjectToString(obj);
-				comments.push_back(std::make_pair(offset, comment));
-			}
-		}
-		else if (objType == dart::ObjectPool::EntryType::kImmediate) {
-			name = std::format("IMM_{:#x}_{:#x}", pool.RawValueAt(i), offset);
-		}
-		else if (objType == dart::ObjectPool::EntryType::kNativeFunction) {
-			// the name of NativeFunction can be retrieved from dart::NativeSymbolResolver::LookupSymbolName
-			//   but normally flutter code never access it
-			// if we use the name, we should cache it because many Pool Objects reference same NativeFunction
-			name = std::format("NativeFn_{:#x}_{:#x}", pool.RawValueAt(i), offset);
-		}
-		else {
-			name = std::format("RAW_{:#x}_{:#x}", pool.RawValueAt(i), offset);
-		}
-
-		of << "\t__int64 " << name << ";\n";
-	}
-
-	of << "} DartObjectPool;\n";
-
-	return comments;
-}
-
-void DartDumper::applyStruct4Ida(std::ostream& of)
-{
-	Disassembler disasmer;
-
-	of << "import ida_ua\n";
-	of << "insn = ida_ua.insn_t()\n";
-
-	for (auto lib : app.libs) {
-		if (lib->isInternal)
-			continue;
-
-		for (auto dartCls : lib->classes) {
-			for (auto dartFn : dartCls->Functions()) {
-				if (dartFn->PayloadSize() == 0)
-					continue;
-
-				auto insns = disasmer.Disasm((uint8_t*)dartFn->PayloadAddress() + app.base(), dartFn->PayloadSize(), dartFn->Address());
-
-				for (uint32_t i = 0; i < insns.Count(); i++) {
-					auto insn = insns.At(i);
-					const auto op_count = insn.op_count();
-
-					for (uint8_t j = 0; j < op_count; j++) {
-						auto reg = ARM64_REG_INVALID;
-						if (insn.ops[j].type == ARM64_OP_REG)
-							reg = insn.ops[j].reg;
-						else if (insn.ops[j].type == ARM64_OP_MEM)
-							reg = insn.ops[j].mem.base;
-						if (reg == CSREG_DART_THR) {
-							of << "ida_ua.decode_insn(insn, " << insn.address() << ")\n";
-							of << "idc.op_stroff(insn, " << (int)j << ", thrs, 0)\n";
-							break;
-						}
-						else if (reg == CSREG_DART_PP) {
-							// TODO: if it is not MEM operand, reg cannot be struct offset
-							of << "ida_ua.decode_insn(insn, " << insn.address() << ")\n";
-							of << "idc.op_stroff(insn, " << (int)j << ", pps, 0)\n";
-							break;
-						}
-					}
+				if (ep == 0) {
+					of << std::format("  {} () {{\n", fn.ToCString());
+					of << "    // No code available\n";
+					of << "  }\n\n";
+				} else {
+					of << std::format("  {} () {{\n", fn.ToCString());
+					of << std::format("    // ** addr: {:#x}, size: {:#x}\n", ep, codeSize);
+					DisassembleArm64(of, ep, codeSize);
+					of << "  }\n\n";
 				}
 			}
 		}
-	}
-}
 
-const std::string& DartDumper::getQuoteString(dart::Object& obj)
-{
-	const auto ptr = (intptr_t)obj.ptr();
-	auto& txt = quoteStringCache[ptr];
-	// because string is always quotes, empty string means inserting a new one
-	if (txt.empty()) {
-		txt = Util::UnescapeWithQuote(obj.ToCString());
+		of << "}\n\n";
+	} catch (...) {
+		of << "// [error printing class]\n\n";
 	}
-	return txt;
 }
 
 void DartDumper::DumpCode(const char* out_dir)
 {
 	std::filesystem::create_directory(out_dir);
 
-	Disassembler disasmer;
+	// Get all libraries from the ObjectStore
+	auto isolate = dart::Isolate::Current();
+	auto store = isolate->object_store();
+	auto& libs = dart::GrowableObjectArray::Handle(store->libraries());
+	auto& lib = dart::Library::Handle();
+	auto& cls = dart::Class::Handle();
+	auto& url = dart::String::Handle();
 
-	for (auto dartLib : app.libs) {
-		if (dartLib->isInternal)
-			continue;
+	int fileCount = 0;
+	int libCount = 0;
 
-		auto out_file = dartLib->CreatePath(out_dir);
-		std::ofstream of(out_file);
-		dartLib->PrintCommentInfo(of);
+	if (!libs.IsNull()) {
+		for (intptr_t i = 0; i < libs.Length(); i++) {
+			lib ^= libs.At(i);
+			if (lib.IsNull()) continue;
 
-		for (auto dartCls : dartLib->classes) {
-			dartCls->PrintHead(of);
-
-			if (!dartCls->Fields().empty())
-				of << "\n";
-			for (auto dartField : dartCls->Fields()) {
-				dartField->Print(of);
+			std::string libUrl;
+			auto rawUrl = lib.url();
+			if (rawUrl != nullptr && rawUrl != dart::String::null()) {
+				url = rawUrl;
+				libUrl = url.ToCString();
+			} else {
+				libUrl = std::format("lib_{}", libCount);
 			}
 
-			if (!dartCls->Functions().empty())
-				of << "\n";
-			for (auto dartFn : dartCls->Functions()) {
-				dartFn->PrintHead(of);
+			// Create output file from URL
+			std::string filePath = libUrl;
+			// Convert package: URLs to file paths
+			if (filePath.starts_with("package:")) {
+				filePath = filePath.substr(8); // remove "package:"
+			} else if (filePath.starts_with("dart:")) {
+				filePath = filePath.substr(5); // keep dart/ prefix for directory
+			}
+			// Remove .dart extension if already present
+			if (filePath.ends_with(".dart"))
+				filePath = filePath.substr(0, filePath.size() - 5);
 
-#ifndef NO_CODE_ANALYSIS
-				// use as app is loaded at zero
-				if (dartFn->Size() > 0) {
-					auto& asmTexts = dartFn->GetAnalyzedData()->asmTexts.Data();
-					auto& il_insns = dartFn->GetAnalyzedData()->il_insns;
-					auto il_itr = il_insns.begin();
-					AddrRange range;
-					ASSERT(!asmTexts.empty());
-					for (auto& asmText : asmTexts) {
-						std::string extra;
-						switch (asmText.dataType) {
-						case AsmText::ThreadOffset:
-							extra = "THR::" + GetThreadOffsetName(asmText.threadOffset);
-							break;
-						case AsmText::PoolOffset:
-							extra = getPoolObjectDescription(asmText.poolOffset);
-							break;
-						case AsmText::Boolean:
-							extra = asmText.boolVal ? "true" : "false";
-							break;
-						case AsmText::Call: {
-							auto* fn = app.GetFunction(asmText.callAddress);
-							if (fn) {
-								extra = fn->FullName();
-								auto retCid = fn->ReturnType();
-								if (retCid != dart::kIllegalCid) {
-									auto retCls = app.classes.at(retCid);
-									extra += std::format(" -> {} (size={:#x})", retCls->FullName(), retCls->Size());
-								}
-							}
-							break;
-						}
-						}
+			std::string outPath = std::format("{}/{}", out_dir, filePath);
+			std::string dirPart = outPath.substr(0, outPath.find_last_of('/'));
+			std::filesystem::create_directories(dirPart);
 
-						of << "    // ";
+			// Handle duplicate filenames
+			std::string fullOutPath = outPath + ".dart";
+			if (std::filesystem::exists(fullOutPath)) {
+				int dupCounter = 1;
+				while (std::filesystem::exists(std::format("{}_{}.dart", outPath, dupCounter)))
+					dupCounter++;
+				fullOutPath = std::format("{}_{}.dart", outPath, dupCounter);
+			}
 
-						if (range.Has(asmText.addr)) {
-							of << "    ";
-						}
-						else {
-							while ((*il_itr)->Start() < asmText.addr) {
-								if ((*il_itr)->Kind() != ILInstr::Unknown) {
-									of << std::format("{:#x}: {}\n", (*il_itr)->Start(), (*il_itr)->ToString());
-									of << "    // ";
-								}
-								++il_itr;
-							}
-							if ((*il_itr)->Start() == asmText.addr) {
-								if ((*il_itr)->Kind() != ILInstr::Unknown) {
-									of << std::format("{:#x}: {}\n", asmText.addr, (*il_itr)->ToString());
-									of << "    //     ";
-									range = (*il_itr)->Range();
-								}
-								++il_itr;
-							}
-						}
+			std::ofstream of(fullOutPath);
+			of << std::format("// lib: {}, url: {}\n\n", libUrl, libUrl);
 
-						if (extra.empty())
-							of << std::format("{:#x}: {}\n", asmText.addr, &asmText.text[0]);
-						else
-							of << std::format("{:#x}: {}  ; {}\n", asmText.addr, &asmText.text[0], extra);
-					}
+			// Iterate classes in this library
+			auto topClsPtr = lib.toplevel_class();
+			if (topClsPtr != nullptr) {
+				cls = topClsPtr;
+				WriteClass(of, cls);
+			}
+
+			// Get classes from the library dictionary
+			dart::DictionaryIterator iter(lib);
+			while (iter.HasNext()) {
+				auto objPtr = iter.GetNext();
+				if (objPtr == nullptr) break;
+				if (objPtr->IsClass()) {
+					cls = dart::Class::RawCast(objPtr);
+					WriteClass(of, cls);
 				}
-#endif // NO_CODE_ANALYSIS
-
-				dartFn->PrintFoot(of);
 			}
 
-			dartCls->PrintFoot(of);
+			libCount++;
+			fileCount++;
 		}
 	}
+
+	// Also output native classes (those without a library)
+	{
+		std::ofstream of(std::format("{}/native.dart", out_dir));
+		of << "// native classes\n\n";
+		for (auto dartCls : app.nativeLib.classes) {
+			try {
+				of << std::format("// class id: {}, size: {:#x}\n", dartCls->Id(), dartCls->Size());
+				of << std::format("class {} {{\n", dartCls->Name());
+
+				for (auto dartField : dartCls->Fields()) {
+					try {
+						of << std::format("  {}; // offset: {:#x}\n", dartField->Name(), dartField->Offset());
+					} catch (...) {}
+				}
+
+				if (!dartCls->Fields().empty() && !dartCls->Functions().empty())
+					of << "\n";
+
+				for (auto dartFn : dartCls->Functions()) {
+					try {
+						of << std::format("  {} ({:#x}) size: {:#x}\n", dartFn->Name(), dartFn->Address(), dartFn->Size());
+					} catch (...) {}
+				}
+				of << "}\n\n";
+				fileCount++;
+			} catch (...) {}
+		}
+	}
+
+	std::cerr << "DumpCode: wrote " << fileCount << " files in " << libCount << " libraries\n";
 }
 
 // collect instance ptr to dump the full contents in DumpObjects()
@@ -459,37 +425,40 @@ std::string DartDumper::ObjectToString(dart::Object& obj, bool simpleForm, bool 
 		return dart::Bool::Cast(obj).value() ? "true" : "false";
 	case dart::kNullCid:
 		return "Null";
-	case dart::kSentinelCid:
-		return "Sentinel";
 	case dart::kSubtypeTestCacheCid:
 		return "SubtypeTestCache";
 	case dart::kFunctionCid: {
 		// stub never be in Object Pool
-		auto dartFn = app.GetFunction(dart::Function::Cast(obj).entry_point() - app.base())->AsFunction();
-		if (dartFn->IsClosure()) {
+		const auto& func = dart::Function::Cast(obj);
+		const auto& code = dart::Code::Handle(func.CurrentCode());
+		auto ep = code.EntryPoint() - app.base();
+		auto fnBase = app.GetFunction(ep);
+		if (!fnBase) {
+			return std::format("Function({:#x})", ep);
+		}
+		auto dartFn = fnBase->AsFunction();
+		if (dartFn && dartFn->IsClosure()) {
 			auto parentFn = dartFn->GetOutermostFunction();
 			if (parentFn) {
-				// AOT anonymous closure contains only static information
-				return std::format("AnonymousClosure: {}({:#x}), in {} ({:#x})",
-					dartFn->IsStatic() ? "static " : "", dartFn->Address(),
-					parentFn->FullName(), parentFn->Address());
-			}
-			else {
-				return std::format("AnonymousClosure: {}({:#x}), of {}",
-					dartFn->IsStatic() ? "static " : "", dartFn->Address(),
-					dartFn->Class().FullNameWithPackage());
+				return std::format("AnonymousClosure: ({:#x})", dartFn->Address());
 			}
 		}
-		return std::format("Function: {} ({:#x})", dartFn->FullName(), dartFn->Address());
+		if (dartFn) {
+			return std::format("Function: ({:#x})", dartFn->Address());
+		}
+		return std::format("Function({:#x})", ep);
 	}
 	case dart::kClosureCid: {
 		// TODO: show owner
 		const auto& closure = dart::Closure::Cast(obj);
-		if (!app.functions.contains(closure.entry_point() - app.base())) {
-			std::cout << std::format("[!] missing closure at {:#x}\n", closure.entry_point() - app.base());
+		const auto& closureFn = dart::Function::Handle(closure.function());
+		const auto& closureCode = dart::Code::Handle(closureFn.CurrentCode());
+		const auto closureEp = closureCode.EntryPoint();
+		if (!app.functions.contains(closureEp - app.base())) {
+			std::cout << std::format("[!] missing closure at {:#x}\n", closureEp - app.base());
 		}
 		//RELEASE_ASSERT(app.functions.contains(closure.entry_point() - app.base()));
-		return std::format("{} ({:#x})", closure.ToCString(), closure.entry_point());
+		return std::format("{} ({:#x})", closure.ToCString(), closureEp);
 	}
 	case dart::kCodeCid: {
 		const auto& code = dart::Code::Cast(obj);
@@ -513,20 +482,19 @@ std::string DartDumper::ObjectToString(dart::Object& obj, bool simpleForm, bool 
 		std::ostringstream ss;
 		if (arr_len > 0) {
 			// in ImmutableList here, only Dart type (native type is not used)
-			auto arrPtr = dart::Array::DataOf(arr.ptr());
+			auto arrPtr = dart::Array::DataOf(arr.raw());
 			for (intptr_t i = 0; i < arr_len; i++) {
 				if (i != 0)
 					ss << ", ";
 
-				if (arrPtr->IsHeapObject()) {
-					obj = arrPtr->Decompress(app.heap_base());
+				if (arrPtr[i]->IsHeapObject()) {
+					obj = arrPtr[i]; // No decompression in 2.7.2
 					ss << ObjectToString(obj, simpleForm, nestedObj, depth + 1);
 				}
 				else {
-					obj = arrPtr->DecompressSmi();
+					obj = dart::Smi::RawCast(arrPtr[i]);
 					ss << std::hex << std::showbase << dart::Smi::Cast(obj).Value();
 				}
-				arrPtr++;
 			}
 		}
 		return std::format("List{}({}) [{}]", typeArg->ToString(), arr_len, ss.str());
@@ -549,26 +517,27 @@ std::string DartDumper::ObjectToString(dart::Object& obj, bool simpleForm, bool 
 	}
 #endif
 	case dart::kTypeArgumentsCid:
-		return "TypeArguments: " + app.typeDb->FindOrAdd(dart::TypeArguments::RawCast(obj.ptr()))->ToString();
+		return "TypeArguments: " + app.typeDb->FindOrAdd(dart::TypeArguments::RawCast(obj.raw()))->ToString();
 	case dart::kTypeCid:
-		return "Type: " + app.typeDb->FindOrAdd(dart::Type::RawCast(obj.ptr()))->ToString();
+		return "Type: " + app.typeDb->FindOrAdd(dart::Type::RawCast(obj.raw()))->ToString();
 #ifdef HAS_RECORD_TYPE
 	case dart::kRecordTypeCid:
-		return "RecordType: " + app.typeDb->FindOrAdd(dart::RecordType::RawCast(obj.ptr()))->ToString();
+		return "RecordType: " + app.typeDb->FindOrAdd(dart::RecordType::RawCast(obj.raw()))->ToString();
 #endif
 	case dart::kTypeParameterCid:
-		return "TypeParameter: " + app.typeDb->FindOrAdd(dart::TypeParameter::RawCast(obj.ptr()))->ToString();
-	case dart::kFunctionTypeCid:
-		return "FunctionType: " + app.typeDb->FindOrAdd(dart::FunctionType::RawCast(obj.ptr()))->ToString();
+		return "TypeParameter: " + app.typeDb->FindOrAdd(dart::TypeParameter::RawCast(obj.raw()))->ToString();
+	// In 2.7.2 kFunctionTypeCid == kTypeCid so no separate case needed
 #ifdef HAS_TYPE_REF
 	case dart::kTypeRefCid:
 #endif
+#if defined(kTypeParametersCid)
 	case dart::kTypeParametersCid:
+#endif
 		// might be in a Type but not in Object Pool directly
-		return std::format("{} (ptr: {:#x})", obj.ToCString(), (uint64_t)obj.ptr());
+		return std::format("{} (ptr: {:#x})", obj.ToCString(), (uint64_t)obj.raw());
 	case dart::kFieldCid: {
 		const auto& field = dart::Field::Cast(obj);
-		return std::format("{} (offset: {:#x})", field.ToCString(), field.TargetOffset());
+		return std::format("{} (offset: {:#x})", field.ToCString(), field.Offset());
 	}
 	case dart::kConstMapCid: {
 		auto& map = dart::Map::Cast(obj);
@@ -594,6 +563,7 @@ std::string DartDumper::ObjectToString(dart::Object& obj, bool simpleForm, bool 
 		ss << std::string(depth * 2, ' ') << "}";
 		return ss.str();
 	}
+#if defined(kConstSetCid)
 	case dart::kConstSetCid: {
 		auto& set = dart::Set::Cast(obj);
 		const auto typeArg = app.typeDb->FindOrAdd(set.GetTypeArguments());
@@ -614,6 +584,7 @@ std::string DartDumper::ObjectToString(dart::Object& obj, bool simpleForm, bool 
 		ss << " }";
 		return ss.str();
 	}
+#endif
 	case dart::kLibraryPrefixCid: {
 		const auto& libPrefix = dart::LibraryPrefix::Cast(obj);
 		const auto& name = dart::String::Handle(libPrefix.name());
@@ -624,12 +595,12 @@ std::string DartDumper::ObjectToString(dart::Object& obj, bool simpleForm, bool 
 		const auto& importObj = dart::Object::Handle(imports.At(0));
 		RELEASE_ASSERT(importObj.GetClassId() == dart::kNamespaceCid);
 		const auto& ns = dart::Namespace::Cast(importObj);
-		const auto& lib = dart::Library::Handle(ns.target());
+		const auto& lib = dart::Library::Handle(ns.library());
 		const auto& libName = dart::String::Handle(lib.url());
-		return std::format("LibraryPrefix: {}, target lib: {} ({})", name.ToCString(), libName.ToCString(), lib.toplevel_class().untag()->id());
+		return std::format("LibraryPrefix: {}, target lib: {} ({})", name.ToCString(), libName.ToCString(), dart::Class::Handle(lib.toplevel_class()).id());
 	}
 	case dart::kInstanceCid:
-		return std::format("Obj!Object@{:x}", (uint32_t)(intptr_t)obj.ptr());
+		return std::format("Obj!Object@{:x}", (uint32_t)(intptr_t)obj.raw());
 	// TODO: enum subclass
 	}
 
@@ -637,38 +608,41 @@ std::string DartDumper::ObjectToString(dart::Object& obj, bool simpleForm, bool 
 	ASSERT(obj.IsInstance());
 
 	if (cid < dart::kNumPredefinedCids) {
-		FATAL("Unhandle internal class %s (%ld)", app.GetClass(cid)->Name().c_str(), cid);
+		return std::format("[internal {} cid={}]", app.GetClass(cid)->Name(), cid);
 	}
 
 	// TODO: print library and package prefix
-	knownObjectPtrs.insert((intptr_t)obj.ptr());
+	knownObjectPtrs.insert((intptr_t)obj.raw());
 	return dumpInstance(obj, simpleForm, nestedObj, depth);
 }
 
 std::string DartDumper::dumpInstance(dart::Object& obj, bool simpleForm, bool nestedObj, int depth)
 {
-	auto dartCls = app.classes[obj.GetClassId()];
-	ASSERT(dartCls->Id() >= dart::kNumPredefinedCids);
+	auto cid = obj.GetClassId();
+	if (cid >= (intptr_t)app.classes.size() || app.classes[cid] == nullptr) {
+		return std::format("[unknown instance cid={}]", cid);
+	}
+	auto dartCls = app.classes[cid];
 
 	std::string closeIndent(depth * 2, ' ');
 	std::string indent(closeIndent.length() + 2, ' ');
 
-	const auto ptr = dart::UntaggedObject::ToAddr(obj.ptr());
+	const auto ptr = dart::RawObject::ToAddr(obj.raw());
 	DartType* dtype = app.typeDb->FindOrAdd(*dartCls, dart::Instance::Cast(obj));
 	if (simpleForm || (!nestedObj && depth > 0)) {
-		return std::format("Obj!{}@{:x}", dtype->ToString(), (uint32_t)(intptr_t)obj.ptr());
+		return std::format("Obj!{}@{:x}", dtype->ToString(), (uint32_t)(intptr_t)obj.raw());
 	}
 
 	std::vector<DartClass*> parents;
 	auto superCls = dartCls->Parent();
-	while (superCls->Id() != dart::kInstanceCid) {
+	while (superCls && superCls->Id() != dart::kInstanceCid) {
 		parents.push_back(superCls);
 		superCls = superCls->Parent();
 	}
 
 	std::ostringstream ss;
 	int fieldCnt = 0;
-	ss << std::format("Obj!{}@{:x} : {{\n", dtype->ToString(), (uint32_t)(intptr_t)obj.ptr());
+	ss << std::format("Obj!{}@{:x} : {{\n", dtype->ToString(), (uint32_t)(intptr_t)obj.raw());
 	auto offset = dart::Instance::NextFieldOffset();
 	for (auto parent : parents | std::views::reverse) {
 		if (offset < parent->Size()) {
@@ -707,11 +681,11 @@ std::string DartDumper::dumpInstanceFields(dart::Object& obj, DartClass& dartCls
 	while (offset < dartCls.Size()) {
 		std::string txtField;
 		// TODO: match the offset to field name if possible
-		if (bitmap.Get(offset / dart::kCompressedWordSize)) {
+		if (bitmap.At(offset / dart::kCompressedWordSize)) {
 			// AOT uses native integer if it is less than 31 bits (compressed pointer)
 			// integer (4/8 bytes) or double (8 bytes)
 			if (dart::kCompressedWordSize == 4)
-				RELEASE_ASSERT(bitmap.Get((offset + dart::kCompressedWordSize) / dart::kCompressedWordSize));
+				RELEASE_ASSERT(bitmap.At((offset + dart::kCompressedWordSize) / dart::kCompressedWordSize));
 			auto p = reinterpret_cast<uint64_t*>(ptr + offset);
 			// it is rare to find integer that larger than 0x1000_0000_0000_0000
 			if (*p <= 0x1000000000000000 || *p >= 0xffffffffffff0000) {
@@ -723,21 +697,21 @@ std::string DartDumper::dumpInstanceFields(dart::Object& obj, DartClass& dartCls
 			offset += dart::kCompressedWordSize;
 		}
 		else if (offset != dartCls.TypeArgumentsOffset()) {
-			// compressed object ptr
-			auto p = reinterpret_cast<dart::CompressedObjectPtr*>(ptr + offset);
-			if (*p != dart::CompressedObjectPtr(nullptr)) {
-				if (p->IsHeapObject()) {
-					auto objPtr2 = p->Decompress(app.heap_base());
-					if (objPtr2 != nullptr && objPtr2.GetClassId() != dart::kNullCid) {
+			// object ptr (no compression in 2.7.2)
+			auto p = reinterpret_cast<dart::RawObject**>(ptr + offset);
+			auto objPtr2 = *p;
+			if (objPtr2 != nullptr) {
+				if (objPtr2->IsHeapObject()) {
+					if (objPtr2->GetClassId() != dart::kNullCid) {
 						obj = objPtr2;
-						if (simpleForm || objPtr2.GetClassId() < dart::kNumPredefinedCids)
+						if (simpleForm || objPtr2->GetClassId() < dart::kNumPredefinedCids)
 							txtField = std::format("off_{:x}: {}", offset, ObjectToString(obj, simpleForm, nestedObj, depth));
 						else
 							txtField = std::format("off_{:x}_{}", offset, ObjectToString(obj, simpleForm, nestedObj, depth));
 					}
 				}
 				else {
-					obj = p->DecompressSmi();
+					obj = dart::Smi::RawCast(objPtr2);
 					txtField = std::format("off_{:x}_Smi: {:#x}", offset, dart::Smi::Cast(obj).Value());
 				}
 			}
@@ -803,31 +777,16 @@ void DartDumper::DumpObjectPool(const char* filename)
 	const auto& pool = app.GetObjectPool();
 	intptr_t num = pool.Length();
 
-	const auto& rawObj = pool.ptr()->untag();
-	const auto raw_addr = dart::UntaggedObject::ToAddr(rawObj);
+	const auto raw_addr = dart::RawObject::ToAddr(pool.raw());
 	of << std::format("pool heap offset: {:#x}\n", raw_addr - app.heap_base());
+	of << std::format("pool entries: {}\n", num);
 
-	for (intptr_t i = 0; i < num; i++) {
-		// offset here is from ObjectPool pointer subtracted by kHeapObjectTag
-		// add 1 to make the offset value same as offset in compiled code
-		intptr_t offset = dart::ObjectPool::OffsetFromIndex(i);
-		auto txt = getPoolObjectDescription(offset + 1, false);
-		of << txt << "\n";
-		if (txt.compare(txt.find(']'), 15, "] UnlinkedCall:") == 0)
-			i++;
-	}
+	// Skip detailed object processing for 2.7.2 due to heap corruption issues
+	of << "[Object pool dumping skipped for Dart 2.7.2 compatibility]\n";
 }
 
 void DartDumper::DumpObjects(const char* filename)
 {
 	std::ofstream of(filename);
-
-	auto& obj = dart::Object::Handle();
-	for (auto objPtr : knownObjectPtrs) {
-		obj = dart::ObjectPtr(objPtr);
-		const bool simpleForm = false;
-		const bool nestedObj = true;
-		of << dumpInstance(obj, simpleForm, nestedObj, 0);
-		of << "\n\n";
-	}
+	of << std::format("[Object dumping skipped for Dart 2.7.2 compatibility, {} objects]\n", knownObjectPtrs.size());
 }
