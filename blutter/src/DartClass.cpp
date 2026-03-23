@@ -20,7 +20,7 @@ DartClass::DartClass(const DartLibrary& lib_, const dart::Class& cls) :
 		auto& str = dart::String::Handle(cls.ScrubbedName());
 		name = str.ToCString();
 	}
-	std::cerr << "  DartClass ctor: cid=" << id << " name=" << name << "\n";
+	
 
 	// host_instance_size() is allocated size from heap (need alignment)
 	// we need only exact size to know the offset of subclass members
@@ -97,7 +97,7 @@ DartClass::DartClass(const DartLibrary& lib_, const dart::Class& cls) :
 		}
 	}
 
-	std::cerr << "  DartClass: " << name << " (cid=" << id << ") created\n";
+	
 
 	//{
 	//	// Canonicalized const instances of this class (UntaggedClass)

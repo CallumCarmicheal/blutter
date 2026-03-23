@@ -8,6 +8,8 @@ public:
 	DartDumper(DartApp& app) : app(app) {};
 
 	void Dump4Ida(std::filesystem::path outDir);
+	void DumpAnalysis(const char* filename);
+	void DumpCodeWithAnalysis(const char* out_dir);
 
 	std::vector<std::pair<intptr_t, std::string>> DumpStructHeaderFile(std::string outFile);
 

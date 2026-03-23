@@ -130,9 +130,9 @@ DartLibrary* DartApp::addLibraryClass(const dart::Library& library, const dart::
 	}
 
 	// New library
-	std::cerr << "  addLibraryClass: creating new library\n";
+	
 	auto dartLib = addLibrary(library);
-	std::cerr << "  addLibraryClass: library created, " << dartLib->classes.size() << " classes\n";
+	
 	return dartLib;
 }
 
@@ -161,44 +161,23 @@ DartLibrary* DartApp::addLibrary(const dart::Library& library)
 void DartApp::LoadInfo()
 {
 	auto isolate = dart::Isolate::Current();
-
-	std::cerr << "LoadInfo: calling loadFromClassTable\n";
 	loadFromClassTable(isolate);
-	std::cerr << "LoadInfo: loadFromClassTable done\n";
-
 	auto store = isolate->object_store();
-
-	std::cerr << "LoadInfo: calling loadStubs\n";
 	loadStubs(store);
-	std::cerr << "LoadInfo: loadStubs done\n";
-
-	std::cerr << "LoadInfo: calling findFunctionInHeap\n";
 	findFunctionInHeap();
-	std::cerr << "LoadInfo: findFunctionInHeap done\n";
 
-	std::cerr << "LoadInfo: calling loadFromObjectPool\n";
+	// Load library info from ObjectStore (VM state is valid here)
+	loadLibraries(store);
+
 	loadFromObjectPool();
-	std::cerr << "LoadInfo: loadFromObjectPool done\n";
-
-	std::cerr << "LoadInfo: calling finalizeFunctionsInfo\n";
-	// finalizeFunctionsInfo crashes in 2.7.2 due to API differences
-	// Skip for now to get basic output
-	std::cerr << "  finalizeFunctionsInfo: skipped for 2.7.2 compatibility\n";
-	// finalizeFunctionsInfo();
-	std::cerr << "LoadInfo: finalizeFunctionsInfo done\n";
-
-	//auto fieldTable = isolate->field_table(); //contains only sentinel, null, false, 0
-
-	// there are instruction tables in vm isolate but their code are not called from Dart code (can be skipped)
-	//dart::Dart::vm_isolate_group();
 }
 
 void DartApp::loadFromClassTable(dart::Isolate* isolate)
 {
-	std::cerr << "  loadFromClassTable: getting class table\n";
+	
 	auto table = isolate->class_table();
 	const auto num_cids = table->NumCids();
-	std::cerr << "  loadFromClassTable: num_cids = " << num_cids << "\n";
+	
 	// In 2.7.2 there is no separate top-level class table
 	const auto num_top_cids = 0;
 	classes.resize(num_cids);
@@ -231,11 +210,11 @@ void DartApp::loadFromClassTable(dart::Isolate* isolate)
 		if (classes[i] != nullptr)
 			classes[i]->unboxed_fields_bitmap = dart::UnboxedFieldBitmap(0);
 	}
-	std::cerr << "  loadFromClassTable: loop done, processing post\n";
+	
 
 	// post process of classes
 	// map super class and native type class ids
-	std::cerr << "  loadFromClassTable: mapping super classes\n";
+	
 	for (auto dartCls : classes) {
 		if (dartCls == NULL)
 			continue;
@@ -261,12 +240,12 @@ void DartApp::loadFromClassTable(dart::Isolate* isolate)
 		else if (dartCls->name == "Future") dartFutureCid = dartCls->id;
 	}
 
-	std::cerr << "  loadFromClassTable: creating typeDb\n";
+	
 	typeDb = std::unique_ptr<DartTypeDb>(new DartTypeDb(classes));
-	std::cerr << "  loadFromClassTable: typeDb created\n";
+	
 
 	// complete the class info after super class is set
-	std::cerr << "  loadFromClassTable: finalizing classes\n";
+	
 	auto zone = dart::Thread::Current()->zone();
 	auto& interfaces = dart::Array::Handle(zone);
 	auto& type = dart::Type::Handle(zone);
@@ -284,7 +263,7 @@ void DartApp::loadFromClassTable(dart::Isolate* isolate)
 		try {
 			declType = cls.DeclarationType();
 		} catch (...) {
-			std::cerr << "  finalizing: cid=" << dartCls->id << " DeclarationType threw\n";
+			
 			continue;
 		}
 		if (declType == nullptr || (intptr_t)declType == (intptr_t)dart::Object::null()) {
@@ -296,7 +275,7 @@ void DartApp::loadFromClassTable(dart::Isolate* isolate)
 		dartCls->declarationType = reinterpret_cast<DartType*>(dartType);
 		finalized++;
 		if (finalized % 500 == 0)
-			std::cerr << "  finalizing: " << finalized << " classes done\n";
+			
 		try {
 			ASSERT(dartType->AsType()->Class().Id() == dartCls->Id());
 			// Type vector names require type argument access which differs in 2.7.2
@@ -322,17 +301,17 @@ void DartApp::loadFromClassTable(dart::Isolate* isolate)
 				dartCls->interfaces.push_back(classes[type.type_class_id()]);
 			}
 		} catch (std::exception& e) {
-			std::cerr << "  finalizing: cid=" << dartCls->id << " error: " << e.what() << "\n";
+			
 		} catch (...) {
-			std::cerr << "  finalizing: cid=" << dartCls->id << " unknown error\n";
+			
 		}
 	}
-	std::cerr << "  loadFromClassTable: finalizing done, " << finalized << " classes\n";
-	std::cerr << "  loadFromClassTable: done\n";
+	
+	
 }
 
 void DartApp::loadStubs(dart::ObjectStore* store)
-{	std::cerr << "  loadStubs: start\n";
+{	
 	dart::CodePtr ptr;
 	auto& code = dart::Code::Handle();
 	uint64_t ep_addr;
@@ -343,7 +322,7 @@ void DartApp::loadStubs(dart::ObjectStore* store)
 	{
 		ptr = store->build_method_extractor_code();
 		code = ptr;
-		std::cerr << "  loadStubs: got method extractor code\n";
+		
 		ep_addr = code.EntryPoint() - base();
 		stub = new DartStub(ptr, DartStub::BuildMethodExtractorStub, ep_addr, code.Size(), "BuildMethodExtractor");
 		ASSERT(!stubs.contains(ep_addr));
@@ -372,10 +351,10 @@ void DartApp::loadStubs(dart::ObjectStore* store)
 			} \
 		} \
 	}
-	std::cerr << "  loadStubs: loading VM stubs\n";
+	
 	VM_STUB_CODE_LIST(DO);
 #undef DO
-	std::cerr << "  loadStubs: done\n";
+	
 }
 
 DartFunction* DartApp::addFunctionNoCheck(const dart::Function& func)
@@ -428,12 +407,12 @@ private:
 
 void DartApp::findFunctionInHeap()
 {
-	std::cerr << "  findFunctionInHeap: starting heap iteration\n";
+	
 	std::vector<dart::CodePtr> codePtrs;
 	dart::HeapIterationScope heap_iteration_scope(dart::Thread::Current());
 	HeapCodeVisitor visitor(codePtrs);
 	heap_iteration_scope.IterateOldObjects(&visitor);
-	std::cerr << "  findFunctionInHeap: found " << codePtrs.size() << " code objects\n";
+	
 
 	auto zone = dart::Thread::Current()->zone();
 	auto& code = dart::Code::Handle(zone);
@@ -452,7 +431,7 @@ void DartApp::findFunctionInHeap()
 
 		processed++;
 		if (processed % 5000 == 0)
-			std::cerr << "  findFunctionInHeap: processed " << processed << " codes\n";
+			
 
 		obj = owner;
 		if (obj.IsClass()) {
@@ -473,17 +452,19 @@ void DartApp::findFunctionInHeap()
 			}
 		}
 	}
-	std::cerr << "  findFunctionInHeap: done, processed " << processed << " codes\n";
+	
 }
 
 void DartApp::finalizeFunctionsInfo()
 {
+	// Update parent pointers
 	auto& parentFn = dart::Function::Handle();
 	auto& parentCode = dart::Code::Handle();
 	std::unordered_map<uint64_t, DartFunction*> pending_functions;
 	for (auto& [_, dartFn] : functions) {
 		// update parent pointer
 		if (dartFn->parent) {
+			try {
 			parentFn = dart::FunctionPtr((intptr_t)dartFn->parent);
 			parentCode = parentFn.CurrentCode();
 			const auto ep_addr = parentCode.EntryPoint() - base();
@@ -501,82 +482,85 @@ void DartApp::finalizeFunctionsInfo()
 				pending_functions[ep_addr] = newDartFn;
 				dartFn->parent = newDartFn;
 			}
+			} catch (...) {}
 		}
-
-		// TODO: handle function result type and paramters type
 	}
 
-	std::unordered_map<uint64_t, DartFunction*> new_functions;
-	while (!pending_functions.empty()) {
-		for (auto& [dartFn_ep, dartFn] : pending_functions) {
-			if (dartFn->parent) {
-				parentFn = dart::FunctionPtr((intptr_t)dartFn->parent);
-				parentCode = parentFn.CurrentCode();
-				const auto ep_addr = parentCode.EntryPoint() - base();
-				if (stubs.contains(ep_addr)) {
-					dartFn->parent = nullptr;
-				}
-				else if (functions.contains(ep_addr)) {
-					dartFn->parent = functions[ep_addr];
-				}
-				else if (pending_functions.contains(ep_addr)) {
-					dartFn->parent = pending_functions[ep_addr];
-				}
-				else if (new_functions.contains(ep_addr)) {
-					dartFn->parent = new_functions[ep_addr];
-				}
-				else {
-					auto newDartFn = addFunctionNoCheck(parentFn);
-					new_functions[ep_addr] = newDartFn;
-					dartFn->parent = newDartFn;
-				}
-			}
-			functions[dartFn_ep] = dartFn;
-		}
-		pending_functions.clear();
-		pending_functions = std::move(new_functions);
-		new_functions.clear();
-	}
-
-	// null self parent
-	for (auto& [_, dartFn] : functions) {
+	for (auto& [_, dartFn] : pending_functions) {
 		// update parent pointer
+		if (dartFn->parent) {
+			try {
+			parentFn = dart::FunctionPtr((intptr_t)dartFn->parent);
+			parentCode = parentFn.CurrentCode();
+			const auto ep_addr = parentCode.EntryPoint() - base();
+			if (stubs.contains(ep_addr)) {
+				dartFn->parent = nullptr;
+			}
+			else if (functions.contains(ep_addr)) {
+				dartFn->parent = functions[ep_addr];
+			}
+			} catch (...) {}
+		}
+
+		// update functions
+		functions[dartFn->Address()] = dartFn;
+	}
+
+	for (auto& [_, dartFn] : pending_functions) {
 		if (dartFn->parent == dartFn) {
 			dartFn->parent = nullptr;
 		}
 	}
 
 	// extract function parameters
-	// Note: Signature is dropped in most function
 	// In 2.7.2, function types are represented differently (Type with signature)
-	// The parameter extraction logic below requires newer Dart API
-	std::cerr << "  finalizeFunctionsInfo: extracting params for " << functions.size() << " functions\n";
 	auto& func = dart::Function::Handle();
+	auto& sigType = dart::Type::Handle();
+	auto& sigFn = dart::Function::Handle();
+	auto& dname = dart::String::Handle();
 	int paramCount = 0;
-	for (auto& [_, dartFn] : functions) {
-		func = dartFn->ptr;
+	int errorCount = 0;
+	int sigFound = 0;
+
+	// Use a copy of functions keys to avoid iterator invalidation
+	std::vector<uint64_t> fnKeys;
+	for (auto& [k, _] : functions) fnKeys.push_back(k);
+
+	for (auto key : fnKeys) {
+		auto it = functions.find(key);
+		if (it == functions.end()) continue;
+		auto dartFn = it->second;
 		paramCount++;
-		if (paramCount % 1000 == 0)
-			std::cerr << "  finalizeFunctionsInfo: processed " << paramCount << "/" << functions.size() << " functions\n";
-		// In 2.7.2, func.SignatureType() returns the type object for the signature
-		auto sigTypePtr = func.SignatureType();
-		if ((intptr_t)sigTypePtr == (intptr_t)dart::Object::null())
+
+		if (dartFn->ptr == nullptr)
 			continue;
-		auto& sigType = dart::Type::Handle(sigTypePtr);
-		if (sigType.IsNull())
-			continue;
-		// Get the signature function
-		auto sigFnPtr = sigType.signature();
-		if ((intptr_t)sigFnPtr == (intptr_t)dart::Function::null())
-			continue;
-		auto& sigFn = dart::Function::Handle(sigFnPtr);
-		if (!sigFn.IsNull()) {
+
+		try {
+			func = dartFn->ptr;
+			if (func.IsNull())
+				continue;
+
+			auto sigTypePtr = func.SignatureType();
+			if ((intptr_t)sigTypePtr == (intptr_t)dart::Object::null())
+				continue;
+			sigFound++;
+			sigType = sigTypePtr;
+			if (sigType.IsNull())
+				continue;
+
+			auto sigFnPtr = sigType.signature();
+			if ((intptr_t)sigFnPtr == (intptr_t)dart::Function::null())
+				continue;
+			sigFn = sigFnPtr;
+			if (sigFn.IsNull())
+				continue;
+
 			dartFn->Signature().returnType = TypeDb()->FindOrAdd(sigFn.result_type());
-			// Parameter extraction simplified for 2.7.2
+
 			const intptr_t num_params = sigFn.NumParameters();
 			const intptr_t num_fixed_params = sigFn.num_fixed_parameters();
 			const intptr_t num_opt_params = sigFn.NumOptionalParameters();
-			auto& dname = dart::String::Handle();
+
 			for (intptr_t i = 0; i < num_params; i++) {
 				auto dtype = TypeDb()->FindOrAdd(sigFn.ParameterTypeAt(i));
 				auto isRequired = false;
@@ -587,11 +571,12 @@ void DartApp::finalizeFunctionsInfo()
 				}
 				dartFn->Signature().params.push_back(FnParam{ dtype, std::move(name), isRequired });
 			}
+		} catch (...) {
+			errorCount++;
 		}
 	}
-	std::cerr << "  finalizeFunctionsInfo: done\n";
+	
 }
-
 void DartApp::walkObject(dart::Object& obj)
 {
 	auto cid = obj.GetClassId();
@@ -692,15 +677,65 @@ void DartApp::walkObject(dart::Object& obj)
 			offset += dart::kWordSize;
 		}
 	}
+	
+}
 
+void DartApp::loadLibraries(dart::ObjectStore* store)
+{
+	const auto& libsArr = dart::GrowableObjectArray::Handle(store->libraries());
+	if (libsArr.IsNull()) return;
+
+	auto& lib = dart::Library::Handle();
+	auto& url = dart::String::Handle();
+
+	for (intptr_t i = 0; i < libsArr.Length(); i++) {
+		lib ^= libsArr.At(i);
+		if (lib.IsNull()) continue;
+
+		std::string libUrl;
+		auto rawUrl = lib.url();
+		if (rawUrl != nullptr && rawUrl != dart::String::null()) {
+			url = rawUrl;
+			libUrl = url.ToCString();
+		} else {
+			continue;
+		}
+
+		// Skip dart: internal libraries
+		if (libUrl.starts_with("dart:")) continue;
+
+		// Check if this library is already loaded
+		bool alreadyLoaded = false;
+		for (auto existingLib : libs) {
+			if (existingLib->url == libUrl) {
+				alreadyLoaded = true;
+				break;
+			}
+		}
+		if (alreadyLoaded) continue;
+
+		// Create a new DartLibrary from the ObjectStore library
+		auto dartLib = new DartLibrary(lib);
+		libs.push_back(dartLib);
+
+		// Map classes from this library to our class table
+		for (auto dartCls : dartLib->classes) {
+			if (dartCls->id < classes.size()) {
+				classes[dartCls->id] = dartCls;
+			}
+			for (auto dartFn : dartCls->functions) {
+				functions[dartFn->Address()] = dartFn;
+			}
+		}
+	}
 }
 
 void DartApp::loadFromObjectPool()
 {
-	std::cerr << "  loadFromObjectPool: start\n";
+	
 	const auto& pool = GetObjectPool();
 	intptr_t num = pool.Length();
-	std::cerr << "  loadFromObjectPool: pool length = " << num << "\n";
+	
 
 	auto& obj = dart::Object::Handle();
 
@@ -710,10 +745,10 @@ void DartApp::loadFromObjectPool()
 		if (objType == dart::ObjectPool::EntryType::kTaggedObject) {
 			processed++;
 			if (processed <= 5 || processed % 10000 == 0)
-				std::cerr << "  loadFromObjectPool: processed " << processed << " tagged objects (i=" << i << ")\n";
+				
 			obj = pool.ObjectAt(i);
 			if (processed <= 5)
-				std::cerr << "    obj cid=" << obj.GetClassId() << " IsField=" << obj.IsField() << " IsFunction=" << obj.IsFunction() << "\n";
+				
 			if (obj.IsField()) {
 				const auto& field = dart::Field::Cast(obj);
 				auto ownerCid = field.Owner()->GetClassId();
@@ -737,5 +772,5 @@ void DartApp::loadFromObjectPool()
 			throw std::runtime_error("Unknown Object Pool entry type");
 		}
 	}
-	std::cerr << "  loadFromObjectPool: done\n";
+	
 }

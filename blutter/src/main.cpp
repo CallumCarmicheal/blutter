@@ -3,8 +3,10 @@
 #include "DartDumper.h"
 #include "CodeAnalyzer.h"
 #include "FridaWriter.h"
+#include "DartThreadInfo.h"
 #include "args.hxx"
 #include <filesystem>
+#include <fstream>
 
 int main(int argc, char** argv)
 {
@@ -26,29 +28,27 @@ int main(int argc, char** argv)
 		std::cout << std::format("libapp is loaded at {:#x}\n", app.base());
 		std::cout << std::format("Dart heap at {:#x}\n", app.heap_base());
 
-		std::cerr << "About to EnterScope...\n";
 		app.EnterScope();
-		std::cerr << "EnterScope done, about to LoadInfo...\n";
 		app.LoadInfo();
-		std::cerr << "LoadInfo done, about to ExitScope...\n";
-		app.ExitScope();
-		std::cerr << "ExitScope done, about to EnterScope2...\n";
 
-		app.EnterScope();
-		std::cerr << "EnterScope2 done, about to dump...\n";
-
-		std::cerr << "Creating DartDumper...\n";
 		DartDumper dumper{ app };
-		std::cerr << "Dumping Object Pool...\n";
 		dumper.DumpObjectPool((outDir / "pp.txt").string().c_str());
-		std::cerr << "Dumping Objects...\n";
 		dumper.DumpObjects((outDir / "objs.txt").string().c_str());
-		std::cerr << "Dumping Code...\n";
 		dumper.DumpCode((outDir / "asm").string().c_str());
-		std::cerr << "Dumping IDA script...\n";
 		dumper.Dump4Ida(outDir / "ida_script");
 
-		std::cerr << "Generating Frida script...\n";
+#ifndef NO_CODE_ANALYSIS
+		try {
+			CodeAnalyzer analyzer{ app };
+			analyzer.AnalyzeAll();
+			// Re-dump with IL annotations after analysis
+			dumper.DumpCodeWithAnalysis((outDir / "asm").string().c_str());
+			dumper.DumpAnalysis((outDir / "asm" / "analysis.txt").string().c_str());
+		} catch (std::exception& e) {
+			std::cerr << "Analysis error: " << e.what() << "\n";
+		} catch (...) {}
+#endif
+
 		FridaWriter fwriter{ app };
 		fwriter.Create((outDir / "blutter_frida.js").string().c_str());
 		std::cerr << "All done!\n";

@@ -19,6 +19,14 @@ public:
 #else
 		// In 2.7.2, only build_method_extractor_code exists
 		BuildMethodExtractorStub,
+		InitStaticFieldStub,
+		LateInitializationErrorSharedWithoutFPURegsStub,
+		LateInitializationErrorSharedWithFPURegsStub,
+		DefaultTypeTestStub,
+		AllocateMintSharedWithoutFPURegsStub,
+		AllocateMintSharedWithFPURegsStub,
+		WriteBarrierWrappersStub,
+		ArrayWriteBarrierStub,
 #endif
 #define DO(name) name ## VMStub,
 		VM_STUB_CODE_LIST(DO)

@@ -12,25 +12,27 @@ AnalyzedFnData::AnalyzedFnData(DartApp& app, DartFunction& dartFn, AsmTexts asmT
 void CodeAnalyzer::AnalyzeAll()
 {
 	Disassembler disasmer;
+	int analyzed = 0;
+	int errors = 0;
 
-	for (auto lib : app.libs) {
-		if (lib->isInternal)
+	// Analyze all functions in the app.functions map
+	for (auto& [ep_offset, dartFn] : app.functions) {
+		if (dartFn->Size() == 0)
 			continue;
-		for (auto cls : lib->classes) {
-			for (auto dartFn : cls->Functions()) {
-				if (dartFn->Size() == 0)
-					continue;
 
-				// start from PayloadAddress or Address?
-				// the assemblies will be deleted after finish analysis because assembly with details consume too much memory
-				auto asm_insns = disasmer.Disasm((uint8_t*)dartFn->MemAddress(), dartFn->Size(), dartFn->Address());
+		try {
+			auto asm_insns = disasmer.Disasm((uint8_t*)dartFn->MemAddress(), dartFn->Size(), dartFn->Address());
 
-				dartFn->SetAnalyzedData(std::make_unique<AnalyzedFnData>(app, *dartFn, convertAsm(asm_insns)));
+			dartFn->SetAnalyzedData(std::make_unique<AnalyzedFnData>(app, *dartFn, convertAsm(asm_insns)));
 
-				asm2il(dartFn, asm_insns);
-			}
+			asm2il(dartFn, asm_insns);
+			analyzed++;
+		} catch (...) {
+			errors++;
 		}
 	}
+
+	std::cerr << "Analysis: " << analyzed << " succeeded, " << errors << " errors\n";
 }
 
 #endif // NO_CODE_ANALYSIS

@@ -100,9 +100,9 @@ def main(indir: str, outdir: str, rebuild_blutter: bool, create_vs_sln: bool, no
     print(f'Dart version: {dart_version}, Snapshot: {snapshot_hash}, Target: {os_name} {arch}')
     print('flags: ' + ' '.join(flags))
     vers = dart_version.split('.', 2)
-    if int(vers[0]) == 2 and int(vers[1]) < 15:
-        print('Dart version <2.15, force "no-analysis" option')
-        no_analysis = True
+    if int(vers[0]) == 2 and int(vers[1]) < 12:
+        # Dart < 2.12 has no code analysis support, but 2.7.2 analysis works
+        pass
 
     has_compressed_ptrs = 'compressed-pointers' in flags
     # null-safety is detected again in blutter application, so no need another build of blutter

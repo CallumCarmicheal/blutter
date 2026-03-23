@@ -96,19 +96,27 @@ class UnboxedFieldBitmap {
 // Top-level classes in 2.7.2 cannot be identified by cid alone.
 inline bool IsTopLevelCidCompat(intptr_t cid) { return false; }
 
+// HEAP_BITS doesn't exist in 2.7.2 (no compressed pointers)
+// Use BARRIER_MASK as a substitute (same register R28)
+const Register HEAP_BITS = BARRIER_MASK;
+
 // Missing class id constants in 2.7.2
 // Function types are just Type objects with a non-null signature() in 2.7.2
 #if !defined(kFunctionTypeCid)
 static const intptr_t kFunctionTypeCid = kTypeCid;
 #endif
-// Sentinel objects don't have a dedicated cid in 2.7.2; use kNullCid as fallback
+// Sentinel objects don't have a dedicated cid in 2.7.2; use kIllegalCid as fallback
 #if !defined(kSentinelCid)
-static const intptr_t kSentinelCid = kNullCid;
+static const intptr_t kSentinelCid = kIllegalCid;
 #endif
 
 // kCompressedWordSize doesn't exist (no compressed pointers in 2.7.2)
 #if !defined(kCompressedWordSize)
 static const intptr_t kCompressedWordSize = kWordSize;
+#endif
+// kCompressedWordSizeLog2 doesn't exist in 2.7.2 (no compressed pointers)
+#if !defined(kCompressedWordSizeLog2)
+static const intptr_t kCompressedWordSizeLog2 = kWordSizeLog2;
 #endif
 
 // TypeParameters class doesn't exist in 2.7.2; function type params use different API
@@ -150,6 +158,120 @@ class FunctionTypeStub {
 using FunctionType = FunctionTypeStub;
 
 }  // namespace dart
+
+// AOT_* prefix constants don't exist in 2.7.2 - map to non-AOT versions
+// Thread offsets
+#if !defined(AOT_Thread_stack_limit_offset)
+#define AOT_Thread_stack_limit_offset dart::Thread::stack_limit_offset()
+#endif
+
+// Thread::field_table_values_offset() doesn't exist in 2.7.2
+// Use a placeholder value
+namespace dart {
+inline intptr_t Thread_field_table_values_offset_compat() { return 0x88; }
+}
+#if !defined(AOT_Thread_field_table_values_offset)
+#define AOT_Thread_field_table_values_offset dart::Thread_field_table_values_offset_compat()
+#endif
+// Double value
+#if !defined(AOT_Double_value_offset)
+#define AOT_Double_value_offset dart::Double::value_offset()
+#endif
+// ArgumentsDescriptor offsets
+#if !defined(AOT_ArgumentsDescriptor_first_named_entry_offset)
+#define AOT_ArgumentsDescriptor_first_named_entry_offset dart::ArgumentsDescriptor::first_named_entry_offset()
+#endif
+#if !defined(AOT_ArgumentsDescriptor_named_entry_size)
+#define AOT_ArgumentsDescriptor_named_entry_size dart::ArgumentsDescriptor::named_entry_size()
+#endif
+#if !defined(AOT_ArgumentsDescriptor_name_offset)
+#define AOT_ArgumentsDescriptor_name_offset dart::ArgumentsDescriptor::name_offset()
+#endif
+#if !defined(AOT_ArgumentsDescriptor_position_offset)
+#define AOT_ArgumentsDescriptor_position_offset dart::ArgumentsDescriptor::position_offset()
+#endif
+#if !defined(AOT_ArgumentsDescriptor_type_args_len_offset)
+#define AOT_ArgumentsDescriptor_type_args_len_offset dart::ArgumentsDescriptor::type_args_len_offset()
+#endif
+#if !defined(AOT_ArgumentsDescriptor_size_offset)
+#define AOT_ArgumentsDescriptor_size_offset dart::ArgumentsDescriptor::count_offset()
+#endif
+#if !defined(AOT_ArgumentsDescriptor_count_offset)
+#define AOT_ArgumentsDescriptor_count_offset dart::ArgumentsDescriptor::count_offset()
+#endif
+// Closure offsets
+#if !defined(AOT_Closure_context_offset)
+#define AOT_Closure_context_offset dart::Closure::context_offset()
+#endif
+#if !defined(AOT_Closure_delayed_type_arguments_offset)
+#define AOT_Closure_delayed_type_arguments_offset dart::Closure::delayed_type_arguments_offset()
+#endif
+// AbstractType type_test_stub_entry_point
+#if !defined(AOT_AbstractType_type_test_stub_entry_point_offset)
+#define AOT_AbstractType_type_test_stub_entry_point_offset dart::AbstractType::type_test_stub_entry_point_offset()
+#endif
+// Code entry_point - in 2.7.2 it's a function, not an array
+#if !defined(AOT_Code_entry_point_offset)
+// Provide array-like access since the analyzer uses AOT_Code_entry_point_offset[kind]
+namespace dart {
+  struct CompatCodeEntryPoint {
+    intptr_t operator[](int kind) const {
+      return dart::Code::entry_point_offset(static_cast<dart::CodeEntryKind>(kind));
+    }
+  };
+}
+#define AOT_Code_entry_point_offset dart::CompatCodeEntryPoint{}
+#endif
+// Thread write barrier offsets - used as array in analyzer
+#if !defined(AOT_Thread_array_write_barrier_entry_point_offset)
+namespace dart {
+  struct CompatWriteBarrierOffset {
+    intptr_t value;
+    const intptr_t* begin() const { return &value; }
+    const intptr_t* end() const { return &value + 1; }
+    bool operator==(int32_t other) const { return value == other; }
+    bool operator!=(int32_t other) const { return value != other; }
+  };
+}
+#define AOT_Thread_array_write_barrier_entry_point_offset dart::CompatWriteBarrierOffset{0x100}
+#endif
+#if !defined(AOT_Thread_write_barrier_wrappers_thread_offset)
+#define AOT_Thread_write_barrier_wrappers_thread_offset dart::CompatWriteBarrierOffset{0x108}
+#endif
+
+// UntaggedObject doesn't exist in 2.7.2 - use RawObject
+namespace dart {
+  using UntaggedObject = RawObject;
+  using UntaggedTypedData = RawTypedData;
+}
+
+// Missing ABI classes in 2.7.2
+// Provide stubs for code analysis compatibility - register values are ARM64 capstone register numbers
+#include <capstone/capstone.h>
+namespace dart {
+struct TypeTestABI {
+  static constexpr arm64_reg kInstanceReg = ARM64_REG_X0;
+  static constexpr arm64_reg kDstTypeReg = ARM64_REG_X1;
+  static constexpr arm64_reg kSubtypeTestCacheReg = ARM64_REG_X2;
+  static constexpr arm64_reg kFunctionTypeArgumentsReg = ARM64_REG_X3;
+  static constexpr arm64_reg kInstantiatorTypeArgumentsReg = ARM64_REG_X4;
+  static constexpr arm64_reg kScratchReg = ARM64_REG_X5;
+};
+struct InitStaticFieldABI {
+  static constexpr arm64_reg kFieldReg = ARM64_REG_X0;
+};
+struct LateInitializationErrorABI {
+  static constexpr arm64_reg kFieldReg = ARM64_REG_X0;
+};
+struct DispatchTableNullErrorABI {
+  static constexpr arm64_reg kInstanceReg = ARM64_REG_X0;
+  static constexpr arm64_reg kClassIdReg = ARM64_REG_X1;
+};
+}
+
+// Missing DartStub kinds
+// These are defined in newer Dart versions' OBJECT_STORE_STUB_CODE_LIST
+// We add them manually for 2.7.2 since they're used in code analysis
 
 // Elf SectionHeaderType shim
 namespace dart { namespace elf {

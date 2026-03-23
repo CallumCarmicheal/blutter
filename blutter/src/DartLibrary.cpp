@@ -20,9 +20,12 @@ DartLibrary::DartLibrary(const dart::Library& lib) : ptr(lib.raw()), topClass(NU
 
 	// add all classes belong to this library
 	auto& cls = dart::Class::Handle();
-	cls = lib.toplevel_class();
-	topClass = AddClass(cls);
-	id = topClass->Id();
+	auto topClsPtr = lib.toplevel_class();
+	if (topClsPtr != nullptr && topClsPtr != dart::Object::null()) {
+		cls = topClsPtr;
+		topClass = AddClass(cls);
+		id = topClass->Id();
+	}
 
 	dart::DictionaryIterator iter(lib);
 	while (iter.HasNext()) {

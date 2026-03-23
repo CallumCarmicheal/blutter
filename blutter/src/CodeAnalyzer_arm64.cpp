@@ -32,11 +32,11 @@ static VarValue* getPoolObject(DartApp& app, intptr_t offset, A64::Register dstR
 		//val = (uintptr_t)pool.ObjectAt(idx);
 		auto ptr = pool.ObjectAt(idx);
 		// Smi is special case. Have to handle first
-		if (!ptr.IsHeapObject()) {
-			return new VarInteger(dart::RawSmiValue(dart::Smi::RawCast(ptr)), dart::kSmiCid);
+		if (!ptr->IsHeapObject()) {
+			return new VarInteger(dart::Smi::Value(dart::Smi::RawCast(ptr)), dart::kSmiCid);
 		}
 
-		if (ptr.IsRawNull())
+		if (ptr == nullptr || ptr == dart::Object::null())
 			return new VarNull();
 
 		auto& obj = dart::Object::Handle(ptr);
@@ -69,43 +69,24 @@ static VarValue* getPoolObject(DartApp& app, intptr_t offset, A64::Register dstR
 		}
 		case dart::kFieldCid: {
 			const auto& field = dart::Field::Cast(obj);
-			auto dartCls = app.GetClass(field.Owner().untag()->id());
-			auto dartField = dartCls->FindField(field.TargetOffset());
-			//auto dartField = app.GetStaticField(field.TargetOffset());
+			auto dartCls = app.GetClass(field.Owner()->GetClassId());
+			auto dartField = dartCls->FindField(field.Offset());
 			ASSERT(dartField);
 			return new VarField(*dartField);
 		}
 		case dart::kImmutableArrayCid:
-			return new VarArray(dart::Array::Cast(obj).ptr());
+			return new VarArray(dart::Array::Cast(obj).raw());
 		// should function and closure be their var types?
 		case dart::kFunctionCid:
 		case dart::kClosureCid:
-		case dart::kConstMapCid:
-			// TODO: map
-		case dart::kConstSetCid:
-			// TODO: set
+		case dart::kLinkedHashMapCid:
 			return new VarExpression(std::format("{}", obj.ToCString()), (int32_t)obj.GetClassId());
-#ifdef HAS_RECORD_TYPE
-		case dart::kRecordCid: {
-			// temporary expression for Record object (need full object for analysis)
-			//const auto& rec = dart::Record::Cast(obj);
-			return new VarExpression(std::format("{}", obj.ToCString()), (int32_t)obj.GetClassId());
-		}
-#endif
-		case dart::kTypeParametersCid:
-			throw std::runtime_error("Type parameter in Object Pool");
 		case dart::kTypeCid:
-			return new VarType(*app.TypeDb()->FindOrAdd(dart::Type::Cast(obj).ptr()));
-#ifdef HAS_RECORD_TYPE
-		case dart::kRecordTypeCid:
-			return new VarRecordType(*app.TypeDb()->FindOrAdd(dart::RecordType::Cast(obj).ptr()));
-#endif
+			return new VarType(*app.TypeDb()->FindOrAdd(dart::Type::Cast(obj).raw()));
 		case dart::kTypeParameterCid:
-			return new VarTypeParameter(*app.TypeDb()->FindOrAdd(dart::TypeParameter::Cast(obj).ptr()));
-		case dart::kFunctionTypeCid:
-			return new VarFunctionType(*app.TypeDb()->FindOrAdd(dart::FunctionType::Cast(obj).ptr()));
+			return new VarTypeParameter(*app.TypeDb()->FindOrAdd(dart::TypeParameter::Cast(obj).raw()));
 		case dart::kTypeArgumentsCid: {
-			return new VarTypeArgument(*app.TypeDb()->FindOrAdd(dart::TypeArguments::Cast(obj).ptr()));
+			return new VarTypeArgument(*app.TypeDb()->FindOrAdd(dart::TypeArguments::Cast(obj).raw()));
 		}
 		case dart::kSentinelCid:
 			return new VarSentinel();
@@ -306,6 +287,7 @@ FunctionAnalyzer::ObjectPoolInstr FunctionAnalyzer::getObjectPoolInstruction(Asm
 			ASSERT(insn.ops[2].type == ARM64_OP_IMM);
 			const auto offset = insn.ops[2].imm;
 			bool val;
+#ifdef HAS_KTRUE_OFFSET_FROM_NULL
 			if (offset == dart::kTrueOffsetFromNull) {
 				val = true;
 			}
@@ -313,8 +295,13 @@ FunctionAnalyzer::ObjectPoolInstr FunctionAnalyzer::getObjectPoolInstruction(Asm
 				val = false;
 			}
 			else {
-				FATAL("add from NULL_REG");
+				throw std::runtime_error("add from NULL_REG");
 			}
+#else
+			// In 2.7.2, kTrueOffsetFromNull/kFalseOffsetFromNull don't exist
+			// Detect from known offset patterns
+			val = (offset != 0);
+#endif
 			auto b = new VarBoolean(val);
 			setAsmTextDataBoolean(insn0.address(), b);
 			dstReg = A64::Register{ insn.ops[0].reg };
@@ -583,7 +570,7 @@ ILResult FunctionAnalyzer::processCheckStackOverflowInstr(AsmInstruction insn)
 				target = (uint64_t)insn.ops[0].imm;
 			}
 			else {
-				FATAL("unexpect branch condition for CheckStackOverflow");
+				throw std::runtime_error("unexpect branch condition for CheckStackOverflow");
 			}
 
 			if (target != 0) {
@@ -881,7 +868,7 @@ void FunctionAnalyzer::handleOptionalPositionalParameters(AsmInstruction& insn, 
 				++insn;
 			}
 			else {
-				FATAL("unexpected instruction");
+				throw std::runtime_error("unexpected instruction");
 			}
 		}
 
@@ -1922,7 +1909,7 @@ ILResult FunctionAnalyzer::processCallInstr(AsmInstruction insn)
 
 ILResult FunctionAnalyzer::processLoadFieldTableInstr(AsmInstruction insn)
 {
-	if (insn.id() == ARM64_INS_LDR && insn.ops[1].mem.base == CSREG_DART_THR && insn.ops[1].mem.disp == dart::Thread::field_table_values_offset()) {
+	if (insn.id() == ARM64_INS_LDR && insn.ops[1].mem.base == CSREG_DART_THR && insn.ops[1].mem.disp == AOT_Thread_field_table_values_offset) {
 		// LoadStaticFieldInstr::EmitNativeCode()
 		// 0x21cb80: ldr  x0, [x26, #0x68]  (Thread::field_table_values)
 		//    ; might have an extra add if field_offset is larger than 0x8000 => add x17, x0, #8, lsl #12
@@ -1952,7 +1939,7 @@ ILResult FunctionAnalyzer::processLoadFieldTableInstr(AsmInstruction insn)
 		}
 
 		if (insn.id() != ARM64_INS_STR && insn.id() != ARM64_INS_LDR) {
-			FATAL("static field without STR or LDR");
+			throw std::runtime_error("static field without STR or LDR");
 		}
 
 		INSN_ASSERT(insn.ops[1].mem.base == tmp_reg);
@@ -1991,7 +1978,9 @@ ILResult FunctionAnalyzer::processLoadFieldTableInstr(AsmInstruction insn)
 				++insn;
 				const auto objPoolInstr = getObjectPoolInstruction(insn);
 				if (objPoolInstr.insCnt > 0) {
+#ifdef dart::InitStaticFieldABI
 					INSN_ASSERT(objPoolInstr.dstReg == A64::Register{ dart::InitStaticFieldABI::kFieldReg });
+#endif
 					INSN_ASSERT(objPoolInstr.item.ValueTypeId() == dart::kFieldCid);
 					auto& dartField = objPoolInstr.item.Get<VarField>()->field;
 					INSN_ASSERT(dartField.Offset() == field_offset);
@@ -2642,7 +2631,7 @@ ILWBResult FunctionAnalyzer::processWriteBarrier(AsmInstruction insn)
 		INSN_ASSERT(insn.id() == ARM64_INS_LDR);
 		INSN_ASSERT(insn.ops[0].reg == CSREG_DART_LR);
 		INSN_ASSERT(insn.ops[1].mem.base == CSREG_DART_THR);
-		if (insn.ops[1].mem.disp == AOT_Thread_array_write_barrier_entry_point_offset) {
+		if (insn.ops[1].mem.disp == AOT_Thread_array_write_barrier_entry_point_offset.value) {
 			isArray = true;
 		}
 		else {
@@ -2821,7 +2810,7 @@ ILResult FunctionAnalyzer::processLoadStore(AsmInstruction insn)
 				// TODO: this index is Smi
 			}
 			else {
-				FATAL("invalid shift for array operation");
+				throw std::runtime_error("invalid shift for array operation");
 			}
 			bool isTypedData = dart::UntaggedTypedData::payload_offset() - dart::kHeapObjectTag == arr_data_offset;
 			INSN_ASSERT(isTypedData || arr_data_offset == dart::Array::data_offset() - dart::kHeapObjectTag);

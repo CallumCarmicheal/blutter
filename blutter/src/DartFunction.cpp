@@ -146,6 +146,77 @@ DartFunction* DartFunction::GetOutermostFunction() const
 	return topFn;
 }
 
+void DartFunction::PopulateSignature()
+{
+	if (is_native || ptr == nullptr || (intptr_t)ptr < 0x1000) {
+		sig_string = Name() + "()";
+		return;
+	}
+
+	// Validate pointer is within reasonable memory range
+	auto rawPtrVal = (uintptr_t)ptr;
+	if (rawPtrVal < 0x10000 || rawPtrVal > 0x800000000000ULL) {
+		sig_string = Name() + "()";
+		return;
+	}
+
+	try {
+		const auto& func = dart::Function::Handle(ptr);
+		if (func.IsNull()) {
+			sig_string = Name() + "()";
+			return;
+		}
+
+		std::string sig;
+		if (is_static) sig += "static ";
+
+		auto sigTypePtr = func.SignatureType();
+		if ((intptr_t)sigTypePtr == (intptr_t)dart::Object::null()) {
+			sig_string = sig + Name() + "()";
+			return;
+		}
+
+		const auto& sigType = dart::Type::Handle(sigTypePtr);
+		if (sigType.IsNull()) {
+			sig_string = sig + Name() + "()";
+			return;
+		}
+
+		auto sigFnPtr = sigType.signature();
+		if ((intptr_t)sigFnPtr == (intptr_t)dart::Function::null()) {
+			sig_string = sig + Name() + "()";
+			return;
+		}
+
+		const auto& sigFn = dart::Function::Handle(sigFnPtr);
+		if (sigFn.IsNull()) {
+			sig_string = sig + Name() + "()";
+			return;
+		}
+
+		// Return type
+		auto& retTypeStr = dart::String::Handle(dart::AbstractType::Handle(sigFn.result_type()).UserVisibleName());
+		sig += retTypeStr.ToCString();
+		sig += " " + Name() + "(";
+
+		// Parameters
+		const auto num_params = sigFn.NumParameters();
+		auto& ptype = dart::String::Handle();
+		for (intptr_t i = 0; i < num_params; i++) {
+			if (i > 0) sig += ", ";
+			ptype = dart::AbstractType::Handle(sigFn.ParameterTypeAt(i)).UserVisibleName();
+			sig += ptype.ToCString();
+			sig += " _";
+		}
+
+		sig += ")";
+		if (is_async) sig += " async";
+		sig_string = sig;
+	} catch (...) {
+		sig_string = Name() + "()";
+	}
+}
+
 void DartFunction::SetAnalyzedData(std::unique_ptr<AnalyzedFnData> data)
 {
 	// must never be called more than once

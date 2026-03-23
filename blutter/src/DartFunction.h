@@ -85,6 +85,9 @@ public:
 	void SetAnalyzedData(std::unique_ptr<AnalyzedFnData> data);
 	AnalyzedFnData* GetAnalyzedData() { return analyzedData.get(); }
 
+	void PopulateSignature();
+	const std::string& SigString() const { return sig_string; }
+
 	std::string ToCallStatement(const std::vector<std::shared_ptr<VarItem>>& args) const;
 	void PrintHead(std::ostream& of) const;
 	void PrintFoot(std::ostream& of) const;
@@ -107,6 +110,7 @@ private:
 	//uint32_t code_size; // code size
 
 	DartFunctionSignature signature;
+	std::string sig_string; // Pre-computed signature string (populated during LoadInfo)
 	std::unique_ptr<AnalyzedFnData> analyzedData;
 
 	friend class DartApp;
