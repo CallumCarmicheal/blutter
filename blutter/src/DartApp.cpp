@@ -110,29 +110,28 @@ DartLibrary* DartApp::addLibraryClass(const dart::Library& library, const dart::
 		return &nativeLib;
 	}
 
-	// Check if we already have a library for this library's top-level class
-	auto topClassPtr = library.toplevel_class();
-	if (topClassPtr != nullptr && topClassPtr != dart::Object::null()) {
-		auto topCid = topClassPtr->GetClassId();
-		if (topCid >= 0 && topCid < (intptr_t)classes.size() && classes[topCid] != nullptr) {
-			// Already have this library
-			auto dartLib = const_cast<DartLibrary*>(&classes[topCid]->lib);
-			if (!cls.IsTopLevel()) {
-				auto dartCls = dartLib->AddClass(cls);
-				if (dartCls->id < classes.size())
-					classes[dartCls->id] = dartCls;
-				for (const auto dartFn : dartCls->functions) {
-					functions[dartFn->Address()] = dartFn;
-				}
+	// Check if we already created a DartLibrary for this dart::Library pointer
+	auto libPtr = (uintptr_t)library.raw();
+	auto it = libByPtr.find(libPtr);
+	if (it != libByPtr.end()) {
+		auto dartLib = it->second;
+		std::cerr << "addLibraryClass: REUSE lib [" << dartLib->url << "] ptr=" << libPtr << "\n";
+		if (!cls.IsTopLevel()) {
+			auto dartCls = dartLib->AddClass(cls);
+			if (dartCls->id < classes.size())
+				classes[dartCls->id] = dartCls;
+			for (const auto dartFn : dartCls->functions) {
+				functions[dartFn->Address()] = dartFn;
 			}
-			return dartLib;
 		}
+		return dartLib;
 	}
 
 	// New library
-	
 	auto dartLib = addLibrary(library);
-	
+	libByPtr[libPtr] = dartLib;
+	std::cerr << "addLibraryClass: NEW lib [" << dartLib->url << "] ptr=" << libPtr << "\n";
+
 	return dartLib;
 }
 
@@ -140,15 +139,11 @@ DartLibrary* DartApp::addLibrary(const dart::Library& library)
 {
 	auto lib = new DartLibrary(library);
 	libs.push_back(lib);
+	libByPtr[(uintptr_t)library.raw()] = lib;
 
 	// add classes and functions for mapping from address
 	for (const auto dartCls : lib->classes) {
-		if (dartCls == lib->topClass) {
-			// In 2.7.2, no separate top-level class index; just store in classes
-			if (dartCls->id < classes.size())
-				classes[dartCls->id] = dartCls;
-		}
-		else
+		if (dartCls->id < classes.size())
 			classes[dartCls->id] = dartCls;
 		for (const auto dartFn : dartCls->functions) {
 			functions[dartFn->Address()] = dartFn;
@@ -704,19 +699,18 @@ void DartApp::loadLibraries(dart::ObjectStore* store)
 		// Skip dart: internal libraries
 		if (libUrl.starts_with("dart:")) continue;
 
-		// Check if this library is already loaded
-		bool alreadyLoaded = false;
-		for (auto existingLib : libs) {
-			if (existingLib->url == libUrl) {
-				alreadyLoaded = true;
-				break;
-			}
+		// Check if this library is already loaded (by pointer)
+		auto libPtr = (uintptr_t)lib.raw();
+		if (libByPtr.contains(libPtr)) {
+			std::cerr << "loadLibraries: SKIP ptr=" << libPtr << " [" << libUrl << "]\n";
+			continue;
 		}
-		if (alreadyLoaded) continue;
 
 		// Create a new DartLibrary from the ObjectStore library
 		auto dartLib = new DartLibrary(lib);
 		libs.push_back(dartLib);
+		libByPtr[libPtr] = dartLib;
+		std::cerr << "loadLibraries: ADD ptr=" << libPtr << " [" << libUrl << "]\n";
 
 		// Map classes from this library to our class table
 		for (auto dartCls : dartLib->classes) {
@@ -725,6 +719,17 @@ void DartApp::loadLibraries(dart::ObjectStore* store)
 			}
 			for (auto dartFn : dartCls->functions) {
 				functions[dartFn->Address()] = dartFn;
+			}
+		}
+
+		// Resolve super class references for newly added classes
+		for (auto dartCls : dartLib->classes) {
+			if (dartCls->superCls) {
+				auto superCid = (intptr_t)dartCls->superCls;
+				if (superCid >= 0 && superCid < (intptr_t)classes.size())
+					dartCls->superCls = classes[superCid];
+				else
+					dartCls->superCls = nullptr;
 			}
 		}
 	}

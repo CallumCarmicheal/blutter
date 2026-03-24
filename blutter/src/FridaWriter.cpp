@@ -41,6 +41,7 @@ void FridaWriter::Create(const char* filename)
 
 	of << "const Classes = [\n";
 	for (auto dartCls : app.classes) {
+	try {
 		if (!dartCls) {
 			of << "null,\n";
 			continue;
@@ -134,11 +135,12 @@ void FridaWriter::Create(const char* filename)
 			of << "id:" << dartCls->Id() << ",";
 			of << "name:" << Util::Quote(dartCls->Name()) << ",";
 			of << "fbitmap:" << dartCls->FieldBitmap() << ",";
-			of << "sid:" << dartCls->Parent()->Id() << ",";
+			of << "sid:" << (dartCls->Parent() ? (int)dartCls->Parent()->Id() : 0) << ",";
 			of << "size:" << dartCls->Size() << ",";
 			of << "argOffset:" << dartCls->TypeArgumentOffset();// << ",";
 			of << "},\n";
 		}
+		} catch (...) { of << "null,\n"; }
 	}
 	of << "];\n";
 }

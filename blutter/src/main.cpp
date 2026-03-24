@@ -34,7 +34,6 @@ int main(int argc, char** argv)
 		DartDumper dumper{ app };
 		dumper.DumpObjectPool((outDir / "pp.txt").string().c_str());
 		dumper.DumpObjects((outDir / "objs.txt").string().c_str());
-		dumper.DumpCode((outDir / "asm").string().c_str());
 		dumper.Dump4Ida(outDir / "ida_script");
 
 #ifndef NO_CODE_ANALYSIS

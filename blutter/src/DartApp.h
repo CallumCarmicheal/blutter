@@ -58,6 +58,8 @@ private:
 	// nativeLib contains all classes that has no library
 	DartLibrary nativeLib;
 	std::vector<DartLibrary*> libs;
+	// map from dart LibraryPtr to our DartLibrary (for dedup in loadFromClassTable)
+	std::unordered_map<uintptr_t, DartLibrary*> libByPtr;
 	// some class might be null
 	std::vector<DartClass*> classes;
 	std::vector<DartClass*> topClasses;

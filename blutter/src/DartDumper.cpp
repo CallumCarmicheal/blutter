@@ -321,12 +321,140 @@ void DartDumper::DumpAnalysis(const char* filename)
 	std::cerr << "DumpAnalysis: wrote " << annotated << " functions with IL annotations\n";
 }
 
+static void WriteAsmTextCommented(std::ostream& of, const AsmText& asmText, DartApp& app)
+{
+	std::string extra;
+	switch (asmText.dataType) {
+	case AsmText::ThreadOffset:
+		extra = "THR::" + GetThreadOffsetName(asmText.threadOffset);
+		break;
+	case AsmText::PoolOffset:
+		extra = std::format("pool[{}]", asmText.poolOffset);
+		break;
+	case AsmText::Call: {
+		auto* callee = app.GetFunction(asmText.callAddress);
+		if (callee) extra = callee->Name();
+		break;
+	}
+	}
+	if (extra.empty())
+		of << std::format("    //     {:#x}: {}\n", asmText.addr, &asmText.text[0]);
+	else
+		of << std::format("    //     {:#x}: {}  ; {}\n", asmText.addr, &asmText.text[0], extra);
+}
+
+static const char* GetILKindName(ILInstr::ILKind kind)
+{
+	switch (kind) {
+	case ILInstr::EnterFrame: return "EnterFrame";
+	case ILInstr::LeaveFrame: return "LeaveFrame";
+	case ILInstr::AllocateStack: return "AllocStack";
+	case ILInstr::CheckStackOverflow: return "CheckStackOverflow";
+	case ILInstr::LoadValue: return "LoadValue";
+	case ILInstr::LoadObject: return "LoadObject";
+	case ILInstr::LoadImm: return "LoadImm";
+	case ILInstr::DecompressPointer: return "DecompressPointer";
+	case ILInstr::SaveRegister: return "SaveRegister";
+	case ILInstr::RestoreRegister: return "RestoreRegister";
+	case ILInstr::SetupParameters: return "SetupParameters";
+	case ILInstr::InitAsync: return "InitAsync";
+	case ILInstr::GdtCall: return "GdtCall";
+	case ILInstr::Call: return "Call";
+	case ILInstr::Return: return "Return";
+	case ILInstr::BranchIfSmi: return "BranchIfSmi";
+	case ILInstr::LoadClassId: return "LoadClassId";
+	case ILInstr::LoadTaggedClassIdMayBeSmi: return "LoadTaggedClassIdMayBeSmi";
+	case ILInstr::BoxInt64: return "BoxInt64";
+	case ILInstr::LoadInt32: return "LoadInt32";
+	case ILInstr::AllocateObject: return "AllocateObject";
+	case ILInstr::LoadArrayElement: return "LoadArrayElement";
+	case ILInstr::StoreArrayElement: return "StoreArrayElement";
+	case ILInstr::LoadField: return "LoadField";
+	case ILInstr::StoreField: return "StoreField";
+	case ILInstr::InitLateStaticField: return "InitLateStaticField";
+	case ILInstr::LoadStaticField: return "LoadStaticField";
+	case ILInstr::StoreStaticField: return "StoreStaticField";
+	case ILInstr::WriteBarrier: return "WriteBarrier";
+	case ILInstr::TestType: return "TestType";
+	default: return "Unknown";
+	}
+}
+
+static bool ILKindUsesVarValue(ILInstr::ILKind kind)
+{
+	// These IL kinds have ToString() that may access dangling VarValue references
+	return kind == ILInstr::LoadValue || kind == ILInstr::SetupParameters ||
+	       kind == ILInstr::InitAsync || kind == ILInstr::LoadObject ||
+	       kind == ILInstr::AllocateObject || kind == ILInstr::LoadArrayElement ||
+	       kind == ILInstr::StoreArrayElement || kind == ILInstr::LoadField ||
+	       kind == ILInstr::StoreField || kind == ILInstr::TestType ||
+	       kind == ILInstr::StoreStaticField || kind == ILInstr::LoadStaticField ||
+	       kind == ILInstr::InitLateStaticField;
+}
+
+static std::string GetILAnnotation(ILInstr* il)
+{
+	if (ILKindUsesVarValue(il->Kind())) {
+		return GetILKindName(il->Kind());
+	}
+	try {
+		return il->ToString();
+	} catch (...) {
+		return GetILKindName(il->Kind());
+	}
+}
+
+static void WriteFnAsmWithIL(std::ostream& of, AnalyzedFnData* analyzed, DartApp& app)
+{
+	auto& il_insns = analyzed->il_insns;
+	auto& asmTexts = analyzed->asmTexts.Data();
+
+	if (il_insns.empty() || asmTexts.empty()) {
+		// No IL instructions, output all assembly as comments
+		for (auto& asmText : asmTexts) {
+			WriteAsmTextCommented(of, asmText, app);
+		}
+		return;
+	}
+
+	// Interleave IL annotations with assembly instructions
+	size_t asmIdx = 0;
+	for (auto& il : il_insns) {
+		if (il->Kind() == ILInstr::Unknown) {
+			// Skip unknown IL, assembly will be output as uncovered
+			continue;
+		}
+
+		// Output assembly before this IL instruction (not covered by any IL)
+		while (asmIdx < asmTexts.size() && asmTexts[asmIdx].addr < il->Start()) {
+			WriteAsmTextCommented(of, asmTexts[asmIdx], app);
+			asmIdx++;
+		}
+
+		// Output IL annotation (use safe annotation to avoid crashes from dangling VarValue refs)
+		of << std::format("    // {:#x}: {}\n", il->Start(), GetILAnnotation(il.get()));
+
+		// Output assembly covered by this IL instruction
+		while (asmIdx < asmTexts.size() && asmTexts[asmIdx].addr < il->End()) {
+			WriteAsmTextCommented(of, asmTexts[asmIdx], app);
+			asmIdx++;
+		}
+	}
+
+	// Output any remaining assembly after the last IL instruction
+	while (asmIdx < asmTexts.size()) {
+		WriteAsmTextCommented(of, asmTexts[asmIdx], app);
+		asmIdx++;
+	}
+}
+
 void DartDumper::DumpCodeWithAnalysis(const char* out_dir)
 {
 	std::filesystem::create_directory(out_dir);
 	int fileCount = 0;
 
 	// Dump classes organized by library with IL annotations
+	std::cerr << "DumpCodeWithAnalysis: iterating " << app.libs.size() << " libraries\n";
 	for (auto dartLib : app.libs) {
 		try {
 			std::string libUrl = dartLib->url;
@@ -341,24 +469,17 @@ void DartDumper::DumpCodeWithAnalysis(const char* out_dir)
 			std::filesystem::create_directories(dirPart);
 
 			std::string outFile = std::format("{}/{}.dart", out_dir, filePath);
-			if (std::filesystem::exists(outFile)) {
-				int dup = 1;
-				while (std::filesystem::exists(std::format("{}_{}.dart", std::format("{}/{}", out_dir, filePath), dup)))
-					dup++;
-				outFile = std::format("{}_{}.dart", std::format("{}/{}", out_dir, filePath), dup);
-			}
 
 			std::ofstream of(outFile);
-			of << std::format("// lib: {}, url: {}\n\n", libUrl, libUrl);
+			of << std::format("// lib: {}, url: {}\n", libUrl, libUrl);
 
 			for (auto dartCls : dartLib->classes) {
 				try {
-					of << std::format("// class id: {}, size: {:#x}\n", dartCls->Id(), dartCls->Size());
-					of << std::format("class {} {{\n", dartCls->Name());
+					dartCls->PrintHead(of);
 
 					for (auto dartField : dartCls->Fields()) {
 						try {
-							of << std::format("  {}; // offset: {:#x}\n", dartField->Name(), dartField->Offset());
+							dartField->Print(of);
 						} catch (...) {}
 					}
 
@@ -369,42 +490,25 @@ void DartDumper::DumpCodeWithAnalysis(const char* out_dir)
 						try {
 							auto ep = dartFn->Address();
 							auto codeSize = dartFn->Size();
-							std::string sig = dartFn->Name() + "()";
+							const auto& sig = dartFn->SigString().empty() ? (dartFn->Name() + "()") : dartFn->SigString();
 							of << std::format("  {} {{\n", sig);
+							if (ep != 0) {
+								of << std::format("    // ** addr: {:#x}, size: {:#x}\n", ep, codeSize);
+							}
 
 							if (codeSize > 0 && dartFn->GetAnalyzedData()) {
 								auto analyzed = dartFn->GetAnalyzedData();
-								auto& asmTexts = analyzed->asmTexts.Data();
-								for (auto& asmText : asmTexts) {
-									std::string extra;
-									switch (asmText.dataType) {
-									case AsmText::ThreadOffset:
-										extra = "THR::" + GetThreadOffsetName(asmText.threadOffset);
-										break;
-									case AsmText::PoolOffset:
-										extra = std::format("pool[{}]", asmText.poolOffset);
-										break;
-									case AsmText::Call: {
-										auto* callee = app.GetFunction(asmText.callAddress);
-										if (callee) extra = callee->Name();
-										break;
-									}
-									}
-									if (extra.empty())
-										of << std::format("    {:#x}: {}\n", asmText.addr, &asmText.text[0]);
-									else
-										of << std::format("    {:#x}: {}  ; {}\n", asmText.addr, &asmText.text[0], extra);
-								}
+								WriteFnAsmWithIL(of, analyzed, app);
 							} else if (ep != 0 && codeSize > 0) {
-								of << std::format("    // ** addr: {:#x}, size: {:#x}\n", ep, codeSize);
 								DisassembleArm64(of, dartFn->MemAddress(), codeSize);
 							}
+
 							of << "  }\n\n";
 						} catch (...) {
 							of << "  [error]\n";
 						}
 					}
-					of << "}\n\n";
+					dartCls->PrintFoot(of);
 				} catch (...) {
 					of << "// [error printing class]\n\n";
 				}
@@ -420,12 +524,11 @@ void DartDumper::DumpCodeWithAnalysis(const char* out_dir)
 		of << "// native classes\n\n";
 		for (auto dartCls : app.nativeLib.classes) {
 			try {
-				of << std::format("// class id: {}, size: {:#x}\n", dartCls->Id(), dartCls->Size());
-				of << std::format("class {} {{\n", dartCls->Name());
+				dartCls->PrintHead(of);
 
 				for (auto dartField : dartCls->Fields()) {
 					try {
-						of << std::format("  {}; // offset: {:#x}\n", dartField->Name(), dartField->Offset());
+						dartField->Print(of);
 					} catch (...) {}
 				}
 
@@ -436,42 +539,25 @@ void DartDumper::DumpCodeWithAnalysis(const char* out_dir)
 					try {
 						auto ep = dartFn->Address();
 						auto codeSize = dartFn->Size();
-						std::string sig = dartFn->Name() + "()";
+						const auto& sig = dartFn->SigString().empty() ? (dartFn->Name() + "()") : dartFn->SigString();
 						of << std::format("  {} {{\n", sig);
+						if (ep != 0) {
+							of << std::format("    // ** addr: {:#x}, size: {:#x}\n", ep, codeSize);
+						}
 
 						if (codeSize > 0 && dartFn->GetAnalyzedData()) {
 							auto analyzed = dartFn->GetAnalyzedData();
-							auto& asmTexts = analyzed->asmTexts.Data();
-							for (auto& asmText : asmTexts) {
-								std::string extra;
-								switch (asmText.dataType) {
-								case AsmText::ThreadOffset:
-									extra = "THR::" + GetThreadOffsetName(asmText.threadOffset);
-									break;
-								case AsmText::PoolOffset:
-									extra = std::format("pool[{}]", asmText.poolOffset);
-									break;
-								case AsmText::Call: {
-									auto* callee = app.GetFunction(asmText.callAddress);
-									if (callee) extra = callee->Name();
-									break;
-								}
-								}
-								if (extra.empty())
-									of << std::format("    {:#x}: {}\n", asmText.addr, &asmText.text[0]);
-								else
-									of << std::format("    {:#x}: {}  ; {}\n", asmText.addr, &asmText.text[0], extra);
-							}
+							WriteFnAsmWithIL(of, analyzed, app);
 						} else if (ep != 0 && codeSize > 0) {
-							of << std::format("    // ** addr: {:#x}, size: {:#x}\n", ep, codeSize);
 							DisassembleArm64(of, dartFn->MemAddress(), codeSize);
 						}
+
 						of << "  }\n\n";
 					} catch (...) {
 						of << "  [error]\n";
 					}
 				}
-				of << "}\n\n";
+				dartCls->PrintFoot(of);
 				fileCount++;
 			} catch (...) {}
 		}
