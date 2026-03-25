@@ -148,7 +148,7 @@ static VarValue* getPoolObject(DartApp& app, intptr_t offset, A64::Register dstR
 		case dart::kInt32x4Cid:
 		case dart::kFloat32x4Cid:
 		case dart::kFloat64x2Cid:
-			return new VarExpression(std::format("{}", obj.ToCString()), (int32_t)obj.GetClassId()); 
+			return new VarExpression(std::format("{}", obj.ToCString()), (int32_t)obj.GetClassId());
 		case dart::kLibraryPrefixCid:
 			// TODO: handle LibraryPrefix object
 		case dart::kInstanceCid:
@@ -438,8 +438,10 @@ FunctionAnalyzer::ObjectPoolInstr FunctionAnalyzer::getObjectPoolInstruction(Asm
 
 void FunctionAnalyzer::printInsnException(InsnException& e)
 {
+#if SHOW_ANALYSIS_LOG
 	std::cerr << "Analysis error at line " << e.location.line()
 		<< " `" << e.location.function_name() << "`: " << e.cond << '\n';
+
 	const uint64_t fn_addr = fnInfo->dartFn.Address();
 
 	auto ins = e.insn;
@@ -455,6 +457,7 @@ void FunctionAnalyzer::printInsnException(InsnException& e)
 		++ins;
 		std::cerr << std::format("    {:#x}: {} {}\n", ins->address, &ins->mnemonic[0], &ins->op_str[0]);
 	}
+#endif
 }
 
 std::unique_ptr<EnterFrameInstr> FunctionAnalyzer::processEnterFrameInstr(AsmIterator& insn)
@@ -615,7 +618,7 @@ std::unique_ptr<CallLeafRuntimeInstr> FunctionAnalyzer::processCallLeafRuntime(A
 	}
 	// weird case
 	// it should be easier to detect THR register if varaible tracking is fully implemented
-	else if ((insn.id() == ARM64_INS_MOV && insn.ops(1).reg == CSREG_DART_THR) || 
+	else if ((insn.id() == ARM64_INS_MOV && insn.ops(1).reg == CSREG_DART_THR) ||
 		(insn.id() == ARM64_INS_LDR && GetThreadLeafFunction(insn.ops(1).mem.disp) && insn.ops(1).mem.base != CSREG_DART_PP && insn.ops(1).mem.disp > dart::Thread::AllocateHandle_entry_point_offset()))
 	{
 		InsnMarker marker(insn);
@@ -690,7 +693,7 @@ std::unique_ptr<CallLeafRuntimeInstr> FunctionAnalyzer::processCallLeafRuntime(A
 			++insn;
 			save_to_vm_tag = true;
 		}
-		
+
 		INSN_ASSERT(insn.id() == ARM64_INS_BLR);
 		INSN_ASSERT(insn.ops(0).reg == call_target_reg);
 		++insn;
@@ -1171,7 +1174,7 @@ void FunctionAnalyzer::handleOptionalNamedParameters(AsmIterator& insn, arm64_re
 	bool isRequired = false;
 	while (!isLastName) {
 		// load current parameter name from ArgumentsDescriptor
-		// the load code uses fixed offset of ArgumentsDescriptor if offset is known (first parameter), 
+		// the load code uses fixed offset of ArgumentsDescriptor if offset is known (first parameter),
 		// if the parameter is "required", no parameter name comparison and also no default value branch
 		if (nameParamCnt) {
 			// load from currParamPosReg
@@ -1417,7 +1420,7 @@ void FunctionAnalyzer::handleOptionalNamedParameters(AsmIterator& insn, arm64_re
 					auto val = fnInfo->State()->MoveRegister(insn.ops(0).reg, insn.ops(1).reg);
 					INSN_ASSERT(val);
 				}
-				// TODO: verify final register for valNameCurrParamPos (set when "nameParamCnt && !isLastName") in this branch 
+				// TODO: verify final register for valNameCurrParamPos (set when "nameParamCnt && !isLastName") in this branch
 				//         is same as another branch
 
 				++insn;
@@ -3030,7 +3033,7 @@ std::unique_ptr<WriteBarrierInstr> FunctionAnalyzer::processWriteBarrierInstr(As
 	// if (can_be_smi == kValueCanBeSmi) {
 	//     BranchIfSmi(value, &done);
 	// }
-	// 
+	//
 	// 0x2a766c: tbz  w0, #0, #0x2a7688  ; BranchIfSmi()
 	// 0x2a7670: ldurb  w16, [x1, #-1]
 	// 0x2a7674: ldurb  w17, [x0, #-1]
@@ -3406,7 +3409,7 @@ void CodeAnalyzer::asm2il(DartFunction* dartFn, AsmInstructions& asm_insns)
 	FunctionAnalyzer analyzer{ dartFn->GetAnalyzedData(), dartFn, asm_insns, app };
 	analyzer.asm2il();
 }
-	
+
 AsmTexts CodeAnalyzer::convertAsm(AsmInstructions& asm_insns)
 {
 	// convert register name in op_str
@@ -3420,14 +3423,14 @@ AsmTexts CodeAnalyzer::convertAsm(AsmInstructions& asm_insns)
 
 		text_asm.addr = insn->address;
 		text_asm.dataType = AsmText::None;
-		
+
 		memset(text_asm.text, ' ', 16);
 		memcpy(text_asm.text, insn->mnemonic, strlen(insn->mnemonic));
 		auto ptr = text_asm.text + 16;
 		auto op_ptr = insn->op_str;
 		bool token_start = true;
 		while (*op_ptr != '\0') {
-			if (token_start) { 
+			if (token_start) {
 				if (op_ptr[0] == 'x' || op_ptr[0] == 'w') {
 					bool do_replacement = true;
 					if (op_ptr[1] == '1' && op_ptr[2] == '5') {

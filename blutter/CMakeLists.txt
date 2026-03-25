@@ -38,7 +38,7 @@ else()
 endif()
 
 # Add source to this project's executable.
-set(SRCDIR "src")
+set(SRCDIR "src" CACHE STRING "Source directory (src for upstream, v2_7_2 for Dart 2.7.2)")
 include(sourcelist.cmake)
 list(TRANSFORM SRCS PREPEND "${SRCDIR}/")
 add_executable(${BINNAME} ${SRCS})
@@ -106,6 +106,9 @@ if (NO_METHOD_EXTRACTOR_STUB)
 endif()
 if (UNIFORM_INTEGER_ACCESS)
 	set(defines ${defines} UNIFORM_INTEGER_ACCESS)
+endif()
+if (SHOW_ANALYSIS_LOG)
+	set(defines ${defines} SHOW_ANALYSIS_LOG)
 endif()
 target_compile_definitions(${BINNAME} PRIVATE ${defines})
 

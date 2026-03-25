@@ -3,8 +3,10 @@
 #include "DartDumper.h"
 #include "CodeAnalyzer.h"
 #include "FridaWriter.h"
+#include "DartThreadInfo.h"
 #include "args.hxx"
 #include <filesystem>
+#include <fstream>
 
 int main(int argc, char** argv)
 {
@@ -20,11 +22,7 @@ int main(int argc, char** argv)
 		auto& libappPath = args::get(infile);
 
 		std::filesystem::path outDir{ args::get(outdir) };
-		std::error_code ec;
-		if (!std::filesystem::create_directory(outDir, ec) && ec.value() != 0) {
-			std::cerr << "Failed to create output directory: " << ec.message() << "\n";
-			return 1;
-		}
+		std::filesystem::create_directory(outDir);
 
 		DartApp app{ libappPath.c_str() };
 		std::cout << std::format("libapp is loaded at {:#x}\n", app.base());
@@ -32,28 +30,25 @@ int main(int argc, char** argv)
 
 		app.EnterScope();
 		app.LoadInfo();
-		app.ExitScope();
-
-		app.EnterScope();
-#ifndef NO_CODE_ANALYSIS
-		std::cout << "Analyzing the application\n";
-		CodeAnalyzer analyzer{ app };
-		analyzer.AnalyzeAll();
-#endif
 
 		DartDumper dumper{ app };
-		std::cout << "Dumping Object Pool\n";
 		dumper.DumpObjectPool((outDir / "pp.txt").string().c_str());
 		dumper.DumpObjects((outDir / "objs.txt").string().c_str());
-#ifndef NO_CODE_ANALYSIS
-		std::cout << "Generating application assemblies\n";
-#else
-		std::cout << "Generating application functions in asm folder\n";
-#endif
-		dumper.DumpCode((outDir / "asm").string().c_str());
 		dumper.Dump4Ida(outDir / "ida_script");
 
-		std::cout << "Generating Frida script\n";
+#ifndef NO_CODE_ANALYSIS
+		try {
+			CodeAnalyzer analyzer{ app };
+			analyzer.AnalyzeAll();
+
+			// Re-dump with IL annotations after analysis
+			dumper.DumpCodeWithAnalysis((outDir / "asm").string().c_str());
+			dumper.DumpAnalysis((outDir / "asm" / "analysis.txt").string().c_str());
+		} catch (std::exception& e) {
+			std::cerr << "Analysis error: " << e.what() << "\n";
+		} catch (...) {}
+#endif
+
 		FridaWriter fwriter{ app };
 		fwriter.Create((outDir / "blutter_frida.js").string().c_str());
 

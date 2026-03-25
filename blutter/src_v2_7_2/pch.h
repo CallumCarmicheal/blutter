@@ -18,7 +18,7 @@
 #if defined(_MSC_VER)
 #	define PRAGMA_WARNING(...) __pragma(warning(__VA_ARGS__))
 #else
-#	define PRAGMA_WARNING(...) 
+#	define PRAGMA_WARNING(...)
 #endif
 
 PRAGMA_WARNING(push, 0)
@@ -27,43 +27,56 @@ PRAGMA_WARNING(push, 0)
 #include <vm/dart.h>
 #include <vm/object.h>
 #include <vm/object_store.h>
-//#include <vm/stub_code.h>
 #include <vm/native_symbol.h>
-//#include <vm/field_table.h>
-//#include <vm/canonical_tables.h>
 #include <vm/zone_text_buffer.h>
-#if __has_include(<vm/tagged_pointer.h>)
-#include <vm/tagged_pointer.h>
-#define TAGGED_POINTER_H_PRESENT 1
-#else
-#include "compat_dart27.h"
-#define FLUTTER_V1 1
-#endif
 #include <vm/compiler/runtime_api.h>
 #include <vm/compiler/runtime_offsets_extracted.h>
+
+#if __has_include(<vm/tagged_pointer.h>)
+	#include <vm/tagged_pointer.h>
+	#define TAGGED_POINTER_H_PRESENT 1
+#else
+	#include "compat_dart27.h"
+#endif
 PRAGMA_WARNING(pop)
 
 #ifdef OLD_MAP_SET_NAME
 namespace dart {
 	using Map = LinkedHashMap;
+#if defined(LinkedHashSet)
 	using Set = LinkedHashSet;
+#endif
 #ifdef OLD_MAP_NO_IMMUTABLE
 	using ConstMap = LinkedHashMap;
+#if defined(LinkedHashSet)
 	using ConstSet = LinkedHashSet;
+#endif
 #else
+#if defined(ImmutableLinkedHashMap)
 	using ConstMap = ImmutableLinkedHashMap;
 	using ConstSet = ImmutableLinkedHashSet;
+#else
+	using ConstMap = LinkedHashMap;
 #endif
-	
+#endif
+
 	enum ClassIdX : intptr_t {
 		kMapCid = kLinkedHashMapCid,
+#if defined(kLinkedHashSetCid)
 		kSetCid = kLinkedHashSetCid,
+#endif
 #ifdef OLD_MAP_NO_IMMUTABLE
 		kConstMapCid = kLinkedHashMapCid,
+#if defined(kLinkedHashSetCid)
 		kConstSetCid = kLinkedHashSetCid,
+#endif
 #else
+#if defined(kImmutableLinkedHashMapCid)
 		kConstMapCid = kImmutableLinkedHashMapCid,
 		kConstSetCid = kImmutableLinkedHashSetCid,
+#else
+		kConstMapCid = kLinkedHashMapCid,
+#endif
 #endif
 	};
 };
@@ -97,25 +110,6 @@ namespace dart {
 #ifdef NO_INIT_LATE_STATIC_FIELD
 #  define InitLateStaticFieldStub InitStaticFieldStub
 #  define InitLateFinalStaticFieldStub InitStaticFieldStub
-#endif
-
-// https://github.com/dart-lang/sdk/commit/84fd647969f0d74ab63f0994d95b5fc26cac006a
-// refactor access to integer value to be same name "Value()". Basically, only dart::Mint is changed.
-// in dart 3.6, there are many internal changes (below). just use only one macro below for simplicity.
-//   all of them are commited separately in dev only. so, it does not work only some dev version.
-// - Improve BitField API. UntaggedObject use BitField. kXXXPos and kXXXSize are changed to XXX.
-//   Use XXX::shift() and XXX::bitsize() for Pos and Size respectively
-// https://github.com/dart-lang/sdk/commit/d3c165d7b52e48672224d0e46d2c74696fd89322
-// - Record::GetRecordType() with one argument
-// https://github.com/dart-lang/sdk/commit/ab19361e87a0248ade1e883f638542163f9100d1
-#ifdef UNIFORM_INTEGER_ACCESS
-#  define MintValue(obj) obj.Value()
-	constexpr intptr_t kUntaggedObjectClassIdTagPos = dart::UntaggedObject::ClassIdTag::shift();
-#  define DartGetRecordType(record) record.GetRecordType(dart::TypeVisibility::kUserVisibleType)
-#else
-#  define MintValue(obj) obj.value()
-	constexpr intptr_t kUntaggedObjectClassIdTagPos = dart::UntaggedObject::kClassIdTagPos;
-#  define DartGetRecordType(record) record.GetRecordType()
 #endif
 
 #endif //PCH_H

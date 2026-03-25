@@ -1,4 +1,6 @@
 set(SRCS 
+    compat_dart27.h
+    compat_dart27_stubs.cpp
     CodeAnalyzer.cpp
     CodeAnalyzer.h
     CodeAnalyzer_arm64.cpp
